@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Clock, CloudSun, MapPin, Users, Settings, BellRing, LogOut, CheckCircle2, AlertTriangle, UserCheck, ChevronLeft, Timer, Shield, UserCog, Check, X, Lock, KeyRound, CalendarDays, BookOpen, TrendingUp, LayoutDashboard, Filter, Download, Search, GraduationCap, Plus, Trash2, PlusCircle } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
 // --- YOUR REAL FIREBASE CREDENTIALS ---
@@ -22,18 +22,8 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'production';
 
-// Helper functions to seamlessly switch between the temporary AI sandbox and your real permanent database
-const getColRef = (colName) => {
-  return isSandbox 
-    ? collection(db, 'artifacts', appId, 'public', 'data', colName)
-    : collection(db, colName); // Uses standard root collections in your real app
-};
-
-const getDocumentRef = (colName, docId) => {
-  return isSandbox 
-    ? doc(db, 'artifacts', appId, 'public', 'data', colName, docId)
-    : doc(db, colName, docId);
-};
+const getColRef = (colName) => collection(db, colName); 
+const getDocumentRef = (colName, docId) => doc(db, colName, docId);
 
 // --- HELPER FOR GRADE BADGES ---
 const getGradeBadgeClass = (grade) => {
@@ -58,59 +48,44 @@ const DESTINATIONS = [
 ];
 
 export default function App() {
-  const [currentRole, setCurrentRole] = useState(null); 
+  const [currentRole, setCurrentRole] = useState(null);
   const [currentTeacher, setCurrentTeacher] = useState(null); 
   
   const [user, setUser] = useState(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [authError, setAuthError] = useState('');
   const [dbError, setDbError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
 
-  // Manage master lists in state, now synced with Firestore
   const [teachers, setTeachers] = useState([]);
   const [students, setStudents] = useState([]);
   const [classes, setClasses] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [calendarOverrides, setCalendarOverrides] = useState([]);
 
-  // Tracks all passes across the entire school
   const [passes, setPasses] = useState([]);
   const globalPasses = passes.filter(p => p.status === 'active');
   const pendingPasses = passes.filter(p => p.status === 'pending');
   const passHistory = passes.filter(p => p.status === 'completed');
 
-  // 1. Firebase Authentication Listener
+  // 1. Firebase Authentication
   useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (isSandbox && typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.warn("Auth warning:", e.message);
+      }
+    };
+    initAuth();
+    
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
-      setIsAuthLoading(false);
+      setUser(firebaseUser || null);
     });
     return () => unsubscribe();
   }, []);
-
-  // Google Login Handler
-  const handleGoogleLogin = async () => {
-    try {
-      setAuthError('');
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Google Login Error:", error);
-      if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user') {
-        setAuthError("Popup blocked by the browser. If you are in the preview environment, this is normal. Please test in StackBlitz or your live site.");
-      } else {
-        setAuthError(error.message);
-      }
-    }
-  };
-
-  // Google Logout Handler
-  const handleLogout = async () => {
-    await signOut(auth);
-    setCurrentRole(null);
-    setCurrentTeacher(null);
-  };
 
   // 2. Firestore Data Syncing
   useEffect(() => {
@@ -121,13 +96,13 @@ export default function App() {
       const colRef = getColRef(colName);
       return onSnapshot(colRef, 
         (snapshot) => {
-          setDbError(false); 
+          setDbError(false);
           const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           if (colName === 'teachers') setTeachers(data);
           if (colName === 'students') setStudents(data);
           if (colName === 'classes') setClasses(data);
           if (colName === 'schedules') setSchedules(data);
-          if (colName === 'calendarDays') setCalendarOverrides(data); 
+          if (colName === 'calendarDays') setCalendarOverrides(data);
           if (colName === 'passes') setPasses(data.map(p => ({
              ...p, 
              startTime: p.startTime ? new Date(p.startTime) : null,
@@ -144,9 +119,8 @@ export default function App() {
       );
     });
     return () => unsubscribes.forEach(unsub => unsub());
-  }, [user, retryCount]); 
+  }, [user, retryCount]);
 
-  // Dynamically generate the next 10 school days based on current date and applies schedules
   const activeCalendar = useMemo(() => {
     const days = [];
     let current = new Date();
@@ -182,7 +156,6 @@ export default function App() {
     });
   }, [calendarOverrides, schedules]);
 
-  // Calculate Today's specific schedule and periods once at the top level
   const todayScheduleData = useMemo(() => {
     const today = new Date();
     const y = today.getFullYear();
@@ -209,7 +182,6 @@ export default function App() {
     pass => pass.destination && pass.destination.id !== 'office'
   );
 
-  // --- Core Pass Logic (Now saving to Firestore) ---
   const handleRequestPass = async (student, destination, requestingTeacher) => {
     if (!user) return { pass: null, status: 'error' };
     
@@ -252,20 +224,6 @@ export default function App() {
   const saveDoc = async (col, id, data) => setDoc(getDocumentRef(col, id), data);
   const delDoc = async (col, id) => deleteDoc(getDocumentRef(col, id));
 
-  // Find the matching teacher record based on Google Email
-  const loggedInTeacher = useMemo(() => {
-    if (!user || !user.email) return null;
-    return teachers.find(t => t.email && t.email.toLowerCase() === user.email.toLowerCase());
-  }, [user, teachers]);
-
-  // --- Screens ---
-
-  // Auth Loading State
-  if (isAuthLoading) {
-    return <div className="min-h-screen bg-slate-100 flex items-center justify-center font-sans"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>;
-  }
-
-  // Database Error Blocker
   if (dbError && user) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-6 font-sans">
@@ -275,15 +233,15 @@ export default function App() {
             <h1 className="text-3xl font-bold">Database Setup Required</h1>
           </div>
           <p className="text-slate-600 text-lg mb-6 leading-relaxed">
-            Your application connected to Google Firebase, but your database is rejecting read/write attempts because of its Security Rules.
+            Your application successfully connected to your Google Firebase project, but your database is currently rejecting all read/write attempts because of its Security Rules.
           </p>
           <div className="bg-slate-50 p-6 rounded-xl border border-slate-200 mb-8">
-            <h3 className="font-bold text-slate-800 mb-3 text-lg">How to fix this:</h3>
+            <h3 className="font-bold text-slate-800 mb-3 text-lg">How to fix this right now:</h3>
             <ol className="list-decimal list-inside space-y-4 text-slate-700 font-medium">
-              <li>Open your <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-blue-600 font-bold hover:underline">Firebase Console</a>.</li>
-              <li>Click on <strong>Firestore Database</strong> in the left menu.</li>
-              <li>Click on the <strong>Rules</strong> tab.</li>
-              <li>Delete everything and paste this:</li>
+              <li>Open your <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-blue-600 font-bold hover:underline">Firebase Console</a> in a new tab.</li>
+              <li>Click on <strong>Firestore Database</strong> in the left sidebar menu.</li>
+              <li>Click on the <strong>Rules</strong> tab at the top of the database view.</li>
+              <li>Delete everything in the editor and paste the code below:</li>
             </ol>
             <pre className="bg-slate-900 text-green-400 p-6 rounded-xl mt-4 font-mono text-sm overflow-x-auto shadow-inner">
 {`rules_version = '2';
@@ -295,11 +253,11 @@ service cloud.firestore {
   }
 }`}
             </pre>
-            <p className="mt-6 text-base text-slate-800 font-bold">5. Click "Publish".</p>
+            <p className="mt-6 text-base text-slate-800 font-bold">5. Click the "Publish" button.</p>
           </div>
           <button 
             onClick={() => { setDbError(false); setRetryCount(c => c + 1); }} 
-            className="w-full py-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xl shadow-md"
+            className="w-full py-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xl transition-colors shadow-md flex items-center justify-center gap-2 active:scale-95"
           >
             I have published the new rules (Retry)
           </button>
@@ -308,73 +266,16 @@ service cloud.firestore {
     );
   }
 
-  // Login Screen (If not authenticated with Google)
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-6 font-sans relative">
-        <div className="bg-white p-12 rounded-[2rem] shadow-xl w-full max-w-md text-center">
-          <div className="w-20 h-20 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Users className="w-10 h-10" />
-          </div>
-          <h1 className="text-3xl font-bold text-slate-800 mb-2 tracking-tight">Hall Pass Manager</h1>
-          <p className="text-slate-500 mb-8">School-wide digital pass system.</p>
-          
-          {authError && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm text-left">
-              <AlertTriangle className="w-5 h-5 mb-2 inline-block" /> {authError}
-            </div>
-          )}
-
-          <button 
-            onClick={handleGoogleLogin}
-            className="w-full py-4 bg-white border-2 border-slate-200 hover:border-blue-500 hover:bg-blue-50 text-slate-700 font-bold rounded-xl text-lg transition-all flex items-center justify-center gap-3 shadow-sm"
-          >
-            <svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/><path d="M1 1h22v22H1z" fill="none"/></svg>
-            Sign in with Google
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Main Portal Selection (Authenticated via Google)
+  // --- Screens ---
   if (!currentRole) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-6 font-sans relative">
-        
-        <div className="absolute top-6 right-6 flex items-center gap-4 bg-white px-4 py-2 rounded-full shadow-sm border border-slate-200">
-          <span className="text-sm font-medium text-slate-600">{user.email}</span>
-          <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 font-bold text-sm flex items-center gap-1">
-            <LogOut className="w-4 h-4" /> Sign Out
-          </button>
-        </div>
-
-        <h1 className="text-4xl font-bold text-slate-800 mb-2 tracking-tight">Welcome to Hall Pass</h1>
+        <h1 className="text-4xl font-bold text-slate-800 mb-2 tracking-tight">Hall Pass Manager</h1>
         <p className="text-slate-500 mb-8">Select your portal to begin</p>
         
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full max-w-3xl">
-          <RoleButton 
-            icon={<Users />} title="Student Kiosk" desc="Classroom touch screen" color="blue" 
-            onClick={() => {
-              if (loggedInTeacher) {
-                setCurrentTeacher(loggedInTeacher);
-                setCurrentRole('student');
-              } else {
-                alert(`Your email (${user.email}) is not assigned to a Teacher record. Please contact the Admin.`);
-              }
-            }} 
-          />
-          <RoleButton 
-            icon={<Settings />} title="Teacher Dashboard" desc="Manage your classroom" color="purple" 
-            onClick={() => {
-              if (loggedInTeacher) {
-                setCurrentTeacher(loggedInTeacher);
-                setCurrentRole('teacher');
-              } else {
-                alert(`Your email (${user.email}) is not assigned to a Teacher record. Please contact the Admin.`);
-              }
-            }} 
-          />
+          <RoleButton icon={<Users />} title="Student Kiosk" desc="Classroom touch screen" color="blue" onClick={() => setCurrentRole('login_kiosk')} />
+          <RoleButton icon={<Settings />} title="Teacher Login" desc="Manage your classroom" color="purple" onClick={() => setCurrentRole('login_teacher')} />
           <RoleButton icon={<UserCog />} title="Substitute Access" desc="Assume a teacher role" color="orange" onClick={() => setCurrentRole('login_sub')} />
           <RoleButton icon={<Shield />} title="Admin Dashboard" desc="School-wide overview" color="emerald" onClick={() => setCurrentRole('login_admin')} />
         </div>
@@ -382,12 +283,11 @@ service cloud.firestore {
     );
   }
 
-  // Admin PIN Check (We keep the 8631 PIN just to secure the Admin dashboard from standard teachers)
   if (currentRole === 'login_admin') {
     return (
       <PinLogin 
-        title="Admin Security"
-        subtitle="Enter Admin PIN to continue"
+        title="Admin Access"
+        subtitle="Enter Admin PIN"
         expectedPin="8631"
         onCancel={() => setCurrentRole(null)}
         onLogin={() => setCurrentRole('admin')}
@@ -395,10 +295,25 @@ service cloud.firestore {
     );
   }
 
+  if (currentRole === 'login_kiosk' || currentRole === 'login_teacher') {
+    return (
+      <PinLogin 
+        title={currentRole === 'login_kiosk' ? "Unlock Kiosk" : "Teacher Login"}
+        subtitle="Enter your Teacher PIN"
+        teachers={teachers}
+        onCancel={() => setCurrentRole(null)}
+        onLogin={(teacher) => {
+          setCurrentTeacher(teacher);
+          setCurrentRole(currentRole === 'login_kiosk' ? 'student' : 'teacher');
+        }}
+      />
+    );
+  }
+
   if (currentRole === 'login_sub') {
     return (
       <PinLogin 
-        title="Substitute Access"
+        title="Substitute Login"
         subtitle="Enter Substitute PIN (Use '0000')"
         expectedPin="0000"
         onCancel={() => setCurrentRole(null)}
@@ -445,7 +360,6 @@ service cloud.firestore {
           isHallwayBusy={isHallwayBusy}
           classes={classes}
           todayPeriods={todayScheduleData.allPeriods}
-          user={user}
         />
       )}
       {currentRole === 'teacher' && (
@@ -493,10 +407,7 @@ service cloud.firestore {
   );
 }
 
-// ==========================================
-// PIN LOGIN COMPONENT (Now only used for Admin/Substitutes, Kiosk unlocks use Google Account context)
-// ==========================================
-function PinLogin({ title, subtitle, onLogin, onCancel, expectedPin }) {
+function PinLogin({ title, subtitle, onLogin, onCancel, expectedPin, teachers = [] }) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
 
@@ -506,11 +417,21 @@ function PinLogin({ title, subtitle, onLogin, onCancel, expectedPin }) {
   };
 
   const handleEnter = () => {
-    if (pin === expectedPin) {
-      onLogin();
+    if (expectedPin !== undefined) {
+      if (pin === expectedPin) {
+        onLogin();
+      } else {
+        setError(true);
+        setPin('');
+      }
     } else {
-      setError(true);
-      setPin('');
+      const teacher = teachers.find(t => t.pin === pin);
+      if (teacher) {
+        onLogin(teacher);
+      } else {
+        setError(true);
+        setPin('');
+      }
     }
   };
 
@@ -531,7 +452,7 @@ function PinLogin({ title, subtitle, onLogin, onCancel, expectedPin }) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pin, expectedPin, onLogin, onCancel]);
+  }, [pin, expectedPin, teachers, onLogin, onCancel]);
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-6">
@@ -575,9 +496,6 @@ function PinLogin({ title, subtitle, onLogin, onCancel, expectedPin }) {
   );
 }
 
-// ==========================================
-// SHARED UI COMPONENTS
-// ==========================================
 function RoleButton({ icon, title, desc, color, onClick }) {
   const colorMap = {
     blue: 'bg-blue-100 text-blue-600 hover:border-blue-500',
@@ -602,13 +520,11 @@ function RoleButton({ icon, title, desc, color, onClick }) {
   );
 }
 
-// ==========================================
-// STUDENT VIEW COMPONENTS
-// ==========================================
-function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onRequestPass, onEndPass, isHallwayBusy, classes, todayPeriods, user }) {
+function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onRequestPass, onEndPass, isHallwayBusy, classes, todayPeriods }) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [viewingPass, setViewingPass] = useState(null);
   const [selectedStudent, setSelectedStudent] = useState(null);
+  const [isUnlocking, setIsUnlocking] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -642,6 +558,21 @@ function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onReq
                !localPendingPasses.some(pass => pass.student.id === student.id)
   );
 
+  if (isUnlocking) {
+    return (
+      <PinLogin
+        title="Exit Kiosk Mode"
+        subtitle={`Enter PIN for ${teacher.name} to exit`}
+        expectedPin={teacher.pin}
+        onCancel={() => setIsUnlocking(false)}
+        onLogin={() => {
+          setIsUnlocking(false);
+          onSwitchRole();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col min-h-screen">
       <header className="bg-slate-900 text-white p-4 flex justify-between items-center shadow-md">
@@ -658,8 +589,8 @@ function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onReq
           <span className={`text-lg font-black ${isFallback ? 'text-slate-500 italic' : 'text-emerald-400'}`}>{activeClass.name}</span>
         </div>
 
-        <button onClick={onSwitchRole} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-white flex items-center gap-2">
-          <Lock className="w-4 h-4" /> Close Kiosk
+        <button onClick={() => setIsUnlocking(true)} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-white flex items-center gap-2">
+          <Lock className="w-4 h-4" /> Exit Kiosk
         </button>
       </header>
 
@@ -840,9 +771,6 @@ function MiniPassBanner({ pass, onClick }) {
   );
 }
 
-// ==========================================
-// TEACHER VIEW COMPONENTS
-// ==========================================
 function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApprove, onDeny, onEndPass, classes, todayScheduleData }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -1044,7 +972,7 @@ function TeacherDashboardPassRow({ pass, isMine, onEndPass }) {
 
   if (elapsed >= 300 && elapsed < 600) {
     colorClasses = {
-      bg: "bg-orange-50", border: "border-orange-200", text: "text-orange-900",
+      bg: "bg-orange-50", border: "orange-200", text: "text-orange-900",
       sub: "text-orange-700", badgeBg: "bg-orange-200", badgeText: "text-orange-800",
       btn: "bg-orange-600 hover:bg-orange-700"
     };
@@ -1082,18 +1010,15 @@ function TeacherDashboardPassRow({ pass, isMine, onEndPass }) {
   );
 }
 
-// ==========================================
-// ADMIN VIEW COMPONENT
-// ==========================================
 function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teachers, onSaveTeacher, onDeleteTeacher, students, onSaveStudent, onDeleteStudent, classes, onSaveClass, onDeleteClass, schedules, onSaveSchedule, onDeleteSchedule, calendarDays, onSaveCalendarDay }) {
   const [activeTab, setActiveTab] = useState('live');
 
-  // Modals State
   const [showTeacherModal, setShowTeacherModal] = useState(false);
   const [editingTeacher, setEditingTeacher] = useState(null);
   
   const [showStudentModal, setShowStudentModal] = useState(false);
   const [editingStudent, setEditingStudent] = useState(null);
+  const [studentModalDefaultGrade, setStudentModalDefaultGrade] = useState('Fr');
 
   const [showClassModal, setShowClassModal] = useState(false);
   const [editingClass, setEditingClass] = useState(null);
@@ -1134,7 +1059,6 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
   const handleDeleteClass = (id) => { onDeleteClass(id); setShowClassModal(false); };
   const handleDeleteSchedule = (id) => { onDeleteSchedule(id); setShowScheduleModal(false); };
 
-  // Sorting Students (Grade Level -> Alphabetical)
   const gradeOrder = { '7th': 1, '8th': 2, 'Fr': 3, 'So': 4, 'Ju': 5, 'Sr': 6 };
   const sortedStudents = [...students].sort((a, b) => {
     const gradeDiff = (gradeOrder[a.grade] || 99) - (gradeOrder[b.grade] || 99);
@@ -1144,7 +1068,6 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col md:flex-row">
-      {/* Admin Sidebar Navigation */}
       <aside className="w-full md:w-64 bg-emerald-950 text-white flex flex-col shadow-xl z-10">
         <div className="p-6">
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
@@ -1155,9 +1078,10 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
         
         <nav className="flex-1 px-4 space-y-2 mt-4">
           <AdminNavLink icon={<LayoutDashboard />} label="Live Traffic" isActive={activeTab === 'live'} onClick={() => setActiveTab('live')} />
-          <AdminNavLink icon={<BookOpen />} label="Staff & Classes" isActive={activeTab === 'staff_classes'} onClick={() => setActiveTab('staff_classes')} />
+          <AdminNavLink icon={<Users />} label="Staff Directory" isActive={activeTab === 'staff'} onClick={() => setActiveTab('staff')} />
+          <AdminNavLink icon={<BookOpen />} label="Classes & Rosters" isActive={activeTab === 'classes'} onClick={() => setActiveTab('classes')} />
           <AdminNavLink icon={<GraduationCap />} label="Student Directory" isActive={activeTab === 'students'} onClick={() => setActiveTab('students')} />
-          <AdminNavLink icon={<CalendarDays />} label="Master Schedule" isActive={activeTab === 'schedule'} onClick={() => setActiveTab('schedule')} />
+          <AdminNavLink icon={<CalendarDays />} label="Bell Schedules" isActive={activeTab === 'schedule'} onClick={() => setActiveTab('schedule')} />
           <AdminNavLink icon={<TrendingUp />} label="Analytics & Reports" isActive={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
         </nav>
 
@@ -1168,7 +1092,6 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
         </div>
       </aside>
 
-      {/* Admin Main Content Area */}
       <main className="flex-1 p-8 overflow-y-auto">
         
         {/* TAB 1: LIVE TRAFFIC */}
@@ -1218,121 +1141,133 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
           </div>
         )}
 
-        {/* TAB 2: STAFF & CLASSES */}
-        {activeTab === 'staff_classes' && (
+        {/* TAB 2: STAFF */}
+        {activeTab === 'staff' && (
           <div className="animate-in fade-in duration-300">
             <header className="mb-8">
-              <h2 className="text-3xl font-bold text-slate-800">Staff & Classes</h2>
-              <p className="text-slate-500 mt-1">Manage personnel and master roster assignments.</p>
+              <h2 className="text-3xl font-bold text-slate-800">Staff Directory</h2>
+              <p className="text-slate-500 mt-1">Manage personnel and teacher accounts.</p>
             </header>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[500px]">
-                <div className="flex justify-between items-center mb-6 shrink-0">
-                  <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-blue-500"/> Staff Directory</h3>
-                  <button onClick={() => { setEditingTeacher(null); setShowTeacherModal(true); }} className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-lg hover:bg-blue-100">+ Add</button>
-                </div>
-                <div className="space-y-3 overflow-y-auto flex-1 pr-2">
-                  {teachers.map(t => (
-                    <div key={t.id} className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-xl border border-transparent hover:border-slate-100 transition-colors">
-                      <div>
-                        <p className="font-bold text-slate-700">{t.name}</p>
-                        <p className="text-sm text-slate-500">{t.email || 'No email'} • Rm {t.room}</p>
-                      </div>
-                      <button onClick={() => { setEditingTeacher(t); setShowTeacherModal(true); }} className="text-slate-400 hover:text-blue-600"><Settings className="w-5 h-5" /></button>
-                    </div>
-                  ))}
-                </div>
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[600px] max-w-4xl">
+              <div className="flex justify-between items-center mb-6 shrink-0">
+                <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-blue-500"/> Teachers</h3>
+                <button onClick={() => { setEditingTeacher(null); setShowTeacherModal(true); }} className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-lg hover:bg-blue-100">+ Add Teacher</button>
               </div>
-
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[500px]">
-                <div className="flex justify-between items-center mb-6 shrink-0">
-                  <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><BookOpen className="w-5 h-5 text-purple-500"/> Master Class List</h3>
-                  <button onClick={() => { setEditingClass(null); setShowClassModal(true); }} className="text-sm font-bold text-purple-600 bg-purple-50 px-3 py-1 rounded-lg hover:bg-purple-100">+ Add</button>
-                </div>
-                <div className="space-y-3 overflow-y-auto flex-1 pr-2">
-                  {classes.map(c => {
-                    const assignedTeacher = teachers.find(t => t.id === c.teacherId);
-                    return (
-                      <div key={c.id} className="p-3 rounded-xl border bg-slate-50 border-slate-100 flex justify-between items-center group">
-                        <div>
-                          <p className="font-bold text-slate-800">{c.name}</p>
-                          <p className="text-sm text-slate-500">Instructor: {assignedTeacher ? assignedTeacher.name : 'Unassigned'} • {c.roster?.length || 0} Students</p>
-                        </div>
-                        <button onClick={() => { setEditingClass(c); setShowClassModal(true); }} className="text-slate-400 hover:text-purple-600 transition-colors"><Settings className="w-5 h-5" /></button>
-                      </div>
-                    );
-                  })}
-                </div>
+              <div className="space-y-3 overflow-y-auto flex-1 pr-2">
+                {teachers.map(t => (
+                  <div key={t.id} className="flex justify-between items-center p-4 hover:bg-slate-50 rounded-xl border border-slate-100 transition-colors">
+                    <div>
+                      <p className="font-bold text-slate-700 text-lg">{t.name}</p>
+                      <p className="text-sm text-slate-500">{t.email || 'No email'} • Room {t.room}</p>
+                    </div>
+                    <button onClick={() => { setEditingTeacher(t); setShowTeacherModal(true); }} className="text-slate-400 hover:text-blue-600"><Settings className="w-5 h-5" /></button>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB 3: STUDENT DIRECTORY */}
+        {/* TAB 3: CLASSES */}
+        {activeTab === 'classes' && (
+          <div className="animate-in fade-in duration-300">
+            <header className="mb-8">
+              <h2 className="text-3xl font-bold text-slate-800">Classes & Rosters</h2>
+              <p className="text-slate-500 mt-1">Manage master class lists and student assignments.</p>
+            </header>
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[600px] max-w-4xl">
+              <div className="flex justify-between items-center mb-6 shrink-0">
+                <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><BookOpen className="w-5 h-5 text-purple-500"/> Master Class List</h3>
+                <button onClick={() => { setEditingClass(null); setShowClassModal(true); }} className="text-sm font-bold text-purple-600 bg-purple-50 px-3 py-1 rounded-lg hover:bg-purple-100">+ Add Class</button>
+              </div>
+              <div className="space-y-3 overflow-y-auto flex-1 pr-2">
+                {classes.map(c => {
+                  const assignedTeacher = teachers.find(t => t.id === c.teacherId);
+                  return (
+                    <div key={c.id} className="p-4 rounded-xl border bg-slate-50 border-slate-100 flex justify-between items-center group">
+                      <div>
+                        <p className="font-bold text-slate-800 text-lg">{c.name}</p>
+                        <p className="text-sm text-slate-500">Instructor: {assignedTeacher ? assignedTeacher.name : 'Unassigned'} • {c.roster?.length || 0} Students</p>
+                      </div>
+                      <button onClick={() => { setEditingClass(c); setShowClassModal(true); }} className="text-slate-400 hover:text-purple-600 transition-colors"><Settings className="w-5 h-5" /></button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: STUDENT DIRECTORY */}
         {activeTab === 'students' && (
           <div className="animate-in fade-in duration-300 flex flex-col h-[calc(100vh-6rem)]">
             <header className="mb-6 shrink-0 flex justify-between items-end">
               <div>
                 <h2 className="text-3xl font-bold text-slate-800">Student Directory</h2>
-                <p className="text-slate-500 mt-1">Master database of all registered students.</p>
+                <p className="text-slate-500 mt-1">Master database of all registered students by grade.</p>
               </div>
-              <button onClick={() => { setEditingStudent(null); setShowStudentModal(true); }} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 flex items-center gap-2 shadow-sm transition-colors">
-                <Plus className="w-5 h-5" /> Add Student
-              </button>
+              <div className="relative w-64">
+                <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                <input type="text" placeholder="Search across all grades..." className="w-full pl-9 pr-4 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm" />
+              </div>
             </header>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex-1 flex flex-col min-h-0">
-              <div className="p-4 border-b border-slate-100 flex justify-between items-center shrink-0">
-                <h3 className="font-bold text-slate-700">All Students ({sortedStudents.length})</h3>
-                <div className="relative w-64">
-                  <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-                  <input type="text" placeholder="Search..." className="w-full pl-9 pr-4 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" />
-                </div>
-              </div>
-              <div className="overflow-y-auto p-0">
-                <table className="w-full text-left border-collapse">
-                  <thead className="sticky top-0 bg-white shadow-sm z-10">
-                    <tr className="text-slate-500 text-sm">
-                      <th className="p-4 font-semibold border-b border-slate-200">Name</th>
-                      <th className="p-4 font-semibold border-b border-slate-200">Student ID</th>
-                      <th className="p-4 font-semibold border-b border-slate-200">Grade Level</th>
-                      <th className="p-4 font-semibold border-b border-slate-200 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedStudents.length === 0 ? (
-                       <tr><td colSpan="4" className="p-8 text-center text-slate-500 italic">No students exist in the directory yet.</td></tr>
+            <div className="flex-1 overflow-y-auto pr-4 space-y-6 pb-12">
+              {[
+                { key: '7th', label: '7th Grade' },
+                { key: '8th', label: '8th Grade' },
+                { key: 'Fr', label: 'Freshmen' },
+                { key: 'So', label: 'Sophomores' },
+                { key: 'Ju', label: 'Juniors' },
+                { key: 'Sr', label: 'Seniors' }
+              ].map(gradeGroup => {
+                const gradeStudents = sortedStudents.filter(s => s.grade === gradeGroup.key);
+                return (
+                  <div key={gradeGroup.key} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                      <h3 className="font-bold text-slate-700 flex items-center gap-3">
+                        <span className={`text-xs px-2.5 py-1 rounded-md font-bold uppercase tracking-wider ${getGradeBadgeClass(gradeGroup.key)}`}>
+                          {gradeGroup.key}
+                        </span>
+                        {gradeGroup.label} ({gradeStudents.length})
+                      </h3>
+                      <button onClick={() => { setEditingStudent(null); setStudentModalDefaultGrade(gradeGroup.key); setShowStudentModal(true); }} className="text-sm font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors border border-emerald-200 hover:border-emerald-300">
+                        <Plus className="w-4 h-4" /> Add
+                      </button>
+                    </div>
+                    {gradeStudents.length === 0 ? (
+                      <p className="text-slate-400 italic text-sm p-6 text-center bg-white">No students added to this grade yet.</p>
                     ) : (
-                      sortedStudents.map(s => (
-                        <tr key={s.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                          <td className="p-4 font-bold text-slate-800">{s.name}</td>
-                          <td className="p-4 text-slate-500 font-mono text-sm">{s.idNum || 'N/A'}</td>
-                          <td className="p-4">
-                            <span className={`text-xs px-2.5 py-1 rounded-md font-bold uppercase tracking-wider ${getGradeBadgeClass(s.grade)}`}>
-                              {s.grade}
-                            </span>
-                          </td>
-                          <td className="p-4 text-right">
-                            <button onClick={() => { setEditingStudent(s); setShowStudentModal(true); }} className="text-slate-400 hover:text-emerald-600 transition-colors bg-white border border-slate-200 hover:border-emerald-200 p-2 rounded-lg shadow-sm">
-                              <Settings className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))
+                      <table className="w-full text-left border-collapse bg-white">
+                        <tbody>
+                          {gradeStudents.map(s => (
+                            <tr key={s.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
+                              <td className="p-3 pl-6 font-bold text-slate-800">{s.name}</td>
+                              <td className="p-3 text-slate-500 font-mono text-sm w-1/3">ID: {s.idNum || 'N/A'}</td>
+                              <td className="p-3 pr-6 text-right">
+                                <button onClick={() => { setEditingStudent(s); setShowStudentModal(true); }} className="text-slate-400 hover:text-emerald-600 transition-colors bg-white border border-slate-200 hover:border-emerald-200 p-2 rounded-lg shadow-sm">
+                                  <Settings className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     )}
-                  </tbody>
-                </table>
-              </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* TAB 4: SCHEDULES & CALENDAR */}
+        {/* TAB 5: SCHEDULES & CALENDAR */}
         {activeTab === 'schedule' && (
           <div className="animate-in fade-in duration-300">
             <header className="mb-8">
-              <h2 className="text-3xl font-bold text-slate-800">Master Schedule</h2>
+              <h2 className="text-3xl font-bold text-slate-800">Bell Schedules</h2>
               <p className="text-slate-500 mt-1">Manage bell templates and the school-wide calendar overrides.</p>
             </header>
 
@@ -1355,7 +1290,6 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
                         
                         <div className="flex-1 px-4">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-slate-600 font-medium">Running:</span>
                             {day.scheduleIds.length === 0 ? (
                               <span className="text-slate-400 italic text-sm">No schedules assigned</span>
                             ) : (
@@ -1404,7 +1338,7 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
           </div>
         )}
 
-        {/* TAB 4: ANALYTICS & REPORTS */}
+        {/* TAB 6: ANALYTICS & REPORTS */}
         {activeTab === 'reports' && (
           <div className="animate-in fade-in duration-300 flex flex-col h-[calc(100vh-6rem)]">
             <header className="mb-6 shrink-0">
@@ -1507,7 +1441,9 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
 
         {showStudentModal && (
           <StudentModal 
+            key={editingStudent ? editingStudent.id : 'new-' + studentModalDefaultGrade}
             student={editingStudent} 
+            defaultGrade={studentModalDefaultGrade}
             onClose={() => setShowStudentModal(false)} 
             onSave={handleSaveStudent}
             onDelete={handleDeleteStudent}
@@ -1565,7 +1501,6 @@ function AdminNavLink({ icon, label, isActive, onClick }) {
   );
 }
 
-// Shared smaller components
 function TeacherNavLink({ icon, label, isActive, onClick }) {
   return (
     <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${isActive ? 'bg-purple-600 text-white font-semibold' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
@@ -1601,7 +1536,7 @@ function TimelineItem({ time, label, isActive, isPast }) {
 
 // --- ADMIN MODAL COMPONENTS ---
 function TeacherModal({ teacher, onClose, onSave, onDelete }) {
-  const [formData, setFormData] = useState(teacher || { name: '', room: '', email: '' });
+  const [formData, setFormData] = useState(teacher || { name: '', room: '', pin: '' });
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -1624,8 +1559,8 @@ function TeacherModal({ teacher, onClose, onSave, onDelete }) {
               <input name="room" value={formData.room} onChange={handleChange} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
-              <label className="block text-sm font-bold text-slate-600 mb-1">Google Email</label>
-              <input name="email" type="email" value={formData.email} onChange={handleChange} placeholder="teacher@school.edu" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <label className="block text-sm font-bold text-slate-600 mb-1">Login PIN</label>
+              <input name="pin" value={formData.pin} onChange={handleChange} placeholder="e.g. 1" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
           </div>
         </div>
@@ -1655,8 +1590,8 @@ function TeacherModal({ teacher, onClose, onSave, onDelete }) {
   );
 }
 
-function StudentModal({ student, onClose, onSave, onDelete }) {
-  const [formData, setFormData] = useState(student || { name: '', idNum: '', grade: 'Fr' });
+function StudentModal({ student, defaultGrade, onClose, onSave, onDelete }) {
+  const [formData, setFormData] = useState(student || { name: '', idNum: '', grade: defaultGrade || 'Fr' });
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -2056,13 +1991,10 @@ function CalendarOverrideModal({ dayItem, schedules, onClose, onSave }) {
   };
 
   const handleSave = () => {
-    // When saving from the modal, we mark it as an override to signify it deviates
-    // from whatever the automated system might have placed there.
     onSave({ ...dayItem, scheduleIds: selectedIds, isOverride: true });
   };
 
   const handleReset = () => {
-    // Passes isOverride: false back to App.jsx, which will delete the document in Firestore
     onSave({ ...dayItem, scheduleIds: [], isOverride: false });
   };
 

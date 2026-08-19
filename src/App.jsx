@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Clock, CloudSun, MapPin, Users, Settings, BellRing, LogOut, CheckCircle2, AlertTriangle, UserCheck, ChevronLeft, Timer, Shield, UserCog, Check, X, Lock, KeyRound, CalendarDays, BookOpen, TrendingUp, LayoutDashboard, Filter, Download, Search, GraduationCap, Plus, Trash2, PlusCircle } from 'lucide-react';
+import { Clock, CloudSun, MapPin, Users, Settings, BellRing, LogOut, CheckCircle2, AlertTriangle, UserCheck, ChevronLeft, Timer, Shield, UserCog, Check, X, Lock, KeyRound, CalendarDays, BookOpen, TrendingUp, LayoutDashboard, Filter, Download, Search, GraduationCap, Plus, Trash2, PlusCircle, Upload, Trash } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 
 // --- YOUR REAL FIREBASE CREDENTIALS ---
 const MY_FIREBASE_CONFIG = {
@@ -213,7 +213,7 @@ export default function App() {
       teacher: requestingTeacher,
       destination: destination,
       requestTime: new Date().toISOString(),
-      startTime: new Date().toISOString(), // Automatically active, bypassing kiosk pending
+      startTime: new Date().toISOString(), // Automatically active, bypassing pending
       status: 'active'
     };
 
@@ -240,6 +240,39 @@ export default function App() {
 
   const saveDoc = async (col, id, data) => setDoc(getDocumentRef(col, id), data);
   const delDoc = async (col, id) => deleteDoc(getDocumentRef(col, id));
+
+  const handleBulkAddStudents = async (newStudents) => {
+    if (!user) return;
+    const batch = writeBatch(db);
+    newStudents.forEach(student => {
+      const docRef = doc(collection(db, 'students'), student.id || 's' + Date.now() + Math.random().toString(36).substring(7));
+      batch.set(docRef, student);
+    });
+    await batch.commit();
+  };
+
+  const handleMassDeleteStudents = async () => {
+    if (!user) return;
+    const batch = writeBatch(db);
+    students.forEach(student => {
+      batch.delete(doc(db, 'students', student.id));
+    });
+    classes.forEach(c => {
+      if (c.roster && c.roster.length > 0) {
+        batch.update(doc(db, 'classes', c.id), { roster: [] });
+      }
+    });
+    await batch.commit();
+  };
+
+  const handleClearPassHistory = async () => {
+    if (!user) return;
+    const batch = writeBatch(db);
+    passHistory.forEach(pass => {
+      batch.delete(doc(db, 'passes', pass.id));
+    });
+    await batch.commit();
+  };
 
   if (dbError && user) {
     return (
@@ -283,7 +316,7 @@ service cloud.firestore {
     );
   }
 
- // --- Screens ---
+  // --- Screens ---
   if (!currentRole) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-6 font-sans relative">
@@ -325,7 +358,7 @@ service cloud.firestore {
       />
     );
   }
-  
+
   return (
     <div className="min-h-screen bg-slate-50">
       {currentRole === 'student' && (
@@ -341,7 +374,7 @@ service cloud.firestore {
           todayPeriods={todayScheduleData.allPeriods}
         />
       )}
-     {currentRole === 'teacher' && (
+      {currentRole === 'teacher' && (
         <TeacherView 
           onSwitchRole={() => { setCurrentRole(null); setCurrentTeacher(null); }} 
           teacher={currentTeacher}
@@ -362,12 +395,15 @@ service cloud.firestore {
           globalPasses={globalPasses}
           passHistory={passHistory}
           onEndPass={handleEndPass}
+          onClearPassHistory={handleClearPassHistory}
           teachers={teachers}
           onSaveTeacher={(t) => saveDoc('teachers', t.id || 't' + Date.now(), t)}
           onDeleteTeacher={(id) => delDoc('teachers', id)}
           students={students}
           onSaveStudent={(s) => saveDoc('students', s.id || 's' + Date.now(), s)}
           onDeleteStudent={(id) => delDoc('students', id)}
+          onBulkAddStudents={handleBulkAddStudents}
+          onMassDeleteStudents={handleMassDeleteStudents}
           classes={classes}
           onSaveClass={(c) => saveDoc('classes', c.id || 'c' + Date.now(), c)}
           onDeleteClass={(id) => delDoc('classes', id)}
@@ -488,12 +524,12 @@ function RoleButton({ icon, title, desc, color, onClick }) {
   return (
     <button 
       onClick={onClick}
-      className={`bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all border-2 border-transparent flex items-center gap-6 group ${colorMap[color].split(' ')[2]}`}
+      className={`bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all border-2 border-transparent flex flex-col items-center justify-center gap-4 group ${colorMap[color].split(' ')[2]}`}
     >
       <div className={`w-16 h-16 rounded-full flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform ${colorMap[color].split(' ').slice(0,2).join(' ')}`}>
         {React.cloneElement(icon, { className: 'w-8 h-8' })}
       </div>
-      <div className="text-left">
+      <div className="text-center">
         <span className="block text-xl font-bold text-slate-800">{title}</span>
         <span className="text-slate-500 text-sm">{desc}</span>
       </div>
@@ -612,7 +648,7 @@ function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onReq
                   }}
                   className="bg-white p-8 rounded-3xl shadow-sm border-2 border-slate-100 hover:border-blue-400 hover:shadow-lg transition-all flex flex-col items-center justify-center gap-4 active:scale-95 relative overflow-hidden"
                 >
-                  {isHallwayBusy && (
+                  {isHallwayBusy && dest.id !== 'office' && (
                     <div className="absolute top-0 right-0 bg-orange-100 text-orange-700 text-xs px-3 py-1 rounded-bl-xl font-semibold">
                       Requires Override
                     </div>
@@ -1026,7 +1062,7 @@ function TeacherDashboardPassRow({ pass, isMine, onEndPass }) {
 
   if (elapsed >= 300 && elapsed < 600) {
     colorClasses = {
-      bg: "bg-orange-50", border: "orange-200", text: "text-orange-900",
+      bg: "bg-orange-50", border: "border-orange-200", text: "text-orange-900",
       sub: "text-orange-700", badgeBg: "bg-orange-200", badgeText: "text-orange-800",
       btn: "bg-orange-600 hover:bg-orange-700"
     };
@@ -1064,7 +1100,7 @@ function TeacherDashboardPassRow({ pass, isMine, onEndPass }) {
   );
 }
 
-function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teachers, onSaveTeacher, onDeleteTeacher, students, onSaveStudent, onDeleteStudent, classes, onSaveClass, onDeleteClass, schedules, onSaveSchedule, onDeleteSchedule, calendarDays, onSaveCalendarDay }) {
+function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teachers, onSaveTeacher, onDeleteTeacher, students, onSaveStudent, onDeleteStudent, onBulkAddStudents, onMassDeleteStudents, onClearPassHistory, classes, onSaveClass, onDeleteClass, schedules, onSaveSchedule, onDeleteSchedule, calendarDays, onSaveCalendarDay }) {
   const [activeTab, setActiveTab] = useState('live');
 
   const [showTeacherModal, setShowTeacherModal] = useState(false);
@@ -1073,7 +1109,8 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
   const [showStudentModal, setShowStudentModal] = useState(false);
   const [editingStudent, setEditingStudent] = useState(null);
   const [studentModalDefaultGrade, setStudentModalDefaultGrade] = useState('Fr');
-
+  const [showBulkAddModal, setShowBulkAddModal] = useState(false);
+  
   const [showClassModal, setShowClassModal] = useState(false);
   const [editingClass, setEditingClass] = useState(null);
 
@@ -1082,6 +1119,8 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
 
   const [showCalendarModal, setShowCalendarModal] = useState(false);
   const [editingCalendarDay, setEditingCalendarDay] = useState(null);
+
+  const [showDangerZone, setShowDangerZone] = useState(false);
 
   const handleSaveTeacher = (teacherData) => {
     onSaveTeacher(teacherData);
@@ -1262,9 +1301,13 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
                 <h2 className="text-3xl font-bold text-slate-800">Student Directory</h2>
                 <p className="text-slate-500 mt-1">Master database of all registered students by grade.</p>
               </div>
-              <div className="relative w-64">
-                <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-                <input type="text" placeholder="Search across all grades..." className="w-full pl-9 pr-4 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm" />
+              <div className="flex gap-3">
+                <button onClick={() => setShowDangerZone(true)} className="px-4 py-2 bg-red-100 text-red-700 hover:bg-red-200 font-bold rounded-lg transition-colors flex items-center gap-2">
+                  <Trash className="w-4 h-4" /> Danger Zone
+                </button>
+                <button onClick={() => setShowBulkAddModal(true)} className="px-4 py-2 bg-slate-800 text-white hover:bg-slate-900 font-bold rounded-lg transition-colors flex items-center gap-2">
+                  <Upload className="w-4 h-4" /> Bulk Import
+                </button>
               </div>
             </header>
 
@@ -1395,45 +1438,19 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
         {/* TAB 6: ANALYTICS & REPORTS */}
         {activeTab === 'reports' && (
           <div className="animate-in fade-in duration-300 flex flex-col h-[calc(100vh-6rem)]">
-            <header className="mb-6 shrink-0">
-              <h2 className="text-3xl font-bold text-slate-800">Analytics & Reports</h2>
-              <p className="text-slate-500 mt-1">Query historical pass data to find patterns and frequent flyers.</p>
+            <header className="mb-6 shrink-0 flex justify-between items-end">
+              <div>
+                <h2 className="text-3xl font-bold text-slate-800">Analytics & Reports</h2>
+                <p className="text-slate-500 mt-1">Query historical pass data to find patterns and frequent flyers.</p>
+              </div>
+              <button onClick={() => setShowDangerZone(true)} className="px-4 py-2 bg-red-100 text-red-700 hover:bg-red-200 font-bold rounded-lg transition-colors flex items-center gap-2">
+                <Trash className="w-4 h-4" /> Danger Zone
+              </button>
             </header>
 
-            {/* Query Builder */}
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 mb-6 shrink-0 flex flex-wrap gap-4 items-end">
-              <div className="flex-1 min-w-[200px]">
-                <label className="block text-sm font-bold text-slate-600 mb-2">Student Name</label>
-                <div className="relative">
-                  <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-                  <input type="text" placeholder="Search students..." className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" />
-                </div>
-              </div>
-              <div className="w-48">
-                <label className="block text-sm font-bold text-slate-600 mb-2">Destination</label>
-                <select className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500">
-                  <option>All Destinations</option>
-                  <option>Bathroom</option>
-                  <option>Main Office</option>
-                </select>
-              </div>
-              <div className="w-48">
-                <label className="block text-sm font-bold text-slate-600 mb-2">Duration Rule</label>
-                <select className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500">
-                  <option>Any Duration</option>
-                  <option>&gt; 10 Minutes</option>
-                  <option>&gt; 20 Minutes</option>
-                </select>
-              </div>
-              <button className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 flex items-center gap-2">
-                <Filter className="w-4 h-4" /> Apply Filter
-              </button>
-            </div>
-
-            {/* Data Ledger */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex-1 flex flex-col min-h-0">
               <div className="p-4 border-b border-slate-100 flex justify-between items-center shrink-0">
-                <h3 className="font-bold text-slate-700">Pass Ledger (Results: 5)</h3>
+                <h3 className="font-bold text-slate-700">Pass Ledger (Results: {passHistory.length})</h3>
                 <button className="text-sm text-emerald-600 font-bold flex items-center gap-2 hover:underline">
                   <Download className="w-4 h-4" /> Export CSV
                 </button>
@@ -1502,6 +1519,21 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
             onSave={handleSaveStudent}
             onDelete={handleDeleteStudent}
           />
+        )}
+
+        {showBulkAddModal && (
+           <BulkAddModal 
+             onClose={() => setShowBulkAddModal(false)}
+             onSave={onBulkAddStudents}
+           />
+        )}
+
+        {showDangerZone && (
+           <DangerZoneModal
+             onClose={() => setShowDangerZone(false)}
+             onMassDelete={onMassDeleteStudents}
+             onClearHistory={onClearPassHistory}
+           />
         )}
 
         {showClassModal && (
@@ -1589,6 +1621,101 @@ function TimelineItem({ time, label, isActive, isPast }) {
 }
 
 // --- ADMIN MODAL COMPONENTS ---
+
+function BulkAddModal({ onClose, onSave }) {
+  const [csvText, setCsvText] = useState('');
+
+  const handleProcessCSV = () => {
+    const lines = csvText.split('\n');
+    const newStudents = lines.map(line => {
+       const [name, idNum, grade] = line.split(',').map(s => s?.trim());
+       if(name) return { name, idNum: idNum || '', grade: grade || 'Fr' };
+       return null;
+    }).filter(Boolean);
+    
+    if(newStudents.length > 0) {
+       onSave(newStudents);
+    }
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+          <h3 className="font-bold text-lg text-slate-800">Bulk Import Students</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="p-6">
+          <p className="text-slate-600 mb-4 text-sm">
+            Paste your student data below. Format each line as: <strong>Name, ID Number, Grade</strong>
+            <br/><span className="text-xs text-slate-400">(Grades must match exactly: 7th, 8th, Fr, So, Ju, Sr)</span>
+          </p>
+          <textarea 
+            value={csvText}
+            onChange={(e) => setCsvText(e.target.value)}
+            placeholder="John Doe, 12345, Fr&#10;Jane Smith, 67890, So"
+            className="w-full h-64 p-4 font-mono text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+          <button onClick={handleProcessCSV} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 transition-colors shadow-sm">Import Students</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DangerZoneModal({ onClose, onMassDelete, onClearHistory }) {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState(false);
+
+  const handleAction = (actionType) => {
+     if(pin === '8631') {
+        if(actionType === 'deleteStudents') onMassDelete();
+        if(actionType === 'clearHistory') onClearHistory();
+        onClose();
+     } else {
+        setError(true);
+        setPin('');
+     }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200 border-4 border-red-500">
+        <div className="flex justify-between items-center p-4 border-b border-red-100 bg-red-50">
+          <h3 className="font-bold text-lg text-red-800 flex items-center gap-2"><AlertTriangle className="w-5 h-5"/> Danger Zone</h3>
+          <button onClick={onClose} className="text-red-400 hover:text-red-600"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="p-6">
+          <p className="text-slate-600 mb-6 text-sm text-center">
+            These actions are permanent. To proceed, please enter the Admin PIN (8631).
+          </p>
+          <div className="flex justify-center mb-6">
+             <input 
+               type="password" 
+               value={pin} 
+               onChange={(e) => { setPin(e.target.value); setError(false); }}
+               placeholder="Enter Admin PIN" 
+               className={`text-center px-4 py-2 bg-slate-50 border ${error ? 'border-red-500 bg-red-50' : 'border-slate-300'} rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 font-mono tracking-widest`}
+             />
+          </div>
+          <div className="space-y-3">
+             <button onClick={() => handleAction('clearHistory')} className="w-full py-3 bg-orange-100 text-orange-700 font-bold rounded-lg hover:bg-orange-200 transition-colors border border-orange-200">
+               Clear All Pass History
+             </button>
+             <button onClick={() => handleAction('deleteStudents')} className="w-full py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors shadow-sm">
+               Delete ALL Students & Rosters
+             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TeacherModal({ teacher, onClose, onSave, onDelete }) {
   const [formData, setFormData] = useState(teacher || { name: '', room: '', pin: '' });
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1619,7 +1746,6 @@ function TeacherModal({ teacher, onClose, onSave, onDelete }) {
           </div>
         </div>
         <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center gap-3">
-          {/* TWO-STEP DELETE LOGIC */}
           <div className="flex-1">
             {teacher && !confirmDelete && (
               <button onClick={() => setConfirmDelete(true)} className="px-4 py-2 text-red-600 font-bold hover:bg-red-50 rounded-lg transition-colors">Delete</button>

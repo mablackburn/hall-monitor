@@ -533,9 +533,9 @@ function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onReq
     return currentMins >= (sh * 60 + sm) && currentMins <= (eh * 60 + em);
   });
 
-  const isFallback = !activeClass;
+ const isFallback = !activeClass;
   if (!activeClass) {
-    activeClass = classes.find(c => c.teacherId === teacher.id) || { roster: [], name: 'No Class Assigned' };
+    activeClass = { roster: [], name: 'Passing Period / Free Time' }; // Now correctly empties the kiosk!
   }
 
   const localActivePasses = globalPasses.filter(p => p.teacher.id === teacher.id);
@@ -833,7 +833,9 @@ function TeacherView({ onSwitchRole, teacher, teachers, globalPasses, pendingPas
 
   // Determine active class based on schedule or manual override
   let activeClass = null;
-  if (overrideClassId) {
+  if (overrideClassId === 'empty') {
+    activeClass = { roster: [], name: 'Passing Period / Free Time', id: 'empty' };
+  } else if (overrideClassId) {
     activeClass = classes.find(c => c.id === overrideClassId);
   } else {
     activeClass = myClassesToday.find(c => {
@@ -845,11 +847,11 @@ function TeacherView({ onSwitchRole, teacher, teachers, globalPasses, pendingPas
     });
 
     if (!activeClass) {
-      activeClass = classes.find(c => c.teacherId === teacher.id) || { roster: [], name: 'No Class Assigned' };
+      activeClass = { roster: [], name: 'Passing Period / Free Time' }; // Clears dashboard between classes
     }
   }
   
-  const isFallback = !activeClass.id && !overrideClassId;
+  const isFallback = !activeClass.id && overrideClassId !== 'empty';
 
   // Combine roster and pulled-in students
   const combinedRoster = [...(activeClass.roster || []), ...pulledStudents];
@@ -924,10 +926,16 @@ function TeacherView({ onSwitchRole, teacher, teachers, globalPasses, pendingPas
                   </div>
                   <div className="p-6 overflow-y-auto">
                      <p className="text-slate-500 mb-6">Select a different class to monitor. This will temporarily replace your scheduled roster.</p>
-                     <button onClick={() => { setOverrideClassId(null); setShowSwitchClassModal(false); }} className="w-full p-4 mb-4 bg-slate-100 rounded-xl font-bold text-slate-700 hover:bg-slate-200 border-2 border-transparent transition-colors text-left flex justify-between">
-                        Revert to Automatic Schedule
-                        <CheckCircle2 className="w-5 h-5 text-slate-400"/>
-                     </button>
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                       <button onClick={() => { setOverrideClassId(null); setShowSwitchClassModal(false); }} className="p-4 bg-slate-100 rounded-xl font-bold text-slate-700 hover:bg-slate-200 transition-colors text-left flex justify-between items-center">
+                          Revert to Auto Schedule
+                          <Clock className="w-5 h-5 text-slate-400"/>
+                       </button>
+                       <button onClick={() => { setOverrideClassId('empty'); setShowSwitchClassModal(false); }} className="p-4 bg-slate-100 rounded-xl font-bold text-slate-700 hover:bg-red-100 hover:text-red-700 transition-colors text-left flex justify-between items-center">
+                          Force Clear (No Class)
+                          <Users className="w-5 h-5 opacity-50"/>
+                       </button>
+                     </div>
                      <div className="grid grid-cols-2 gap-4">
                        {classes.map(c => (
                           <button key={c.id} onClick={() => { setOverrideClassId(c.id); setShowSwitchClassModal(false); }} className="p-4 border-2 border-slate-100 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all font-bold text-slate-700 text-left flex flex-col justify-between h-full">

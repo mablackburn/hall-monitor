@@ -266,17 +266,16 @@ service cloud.firestore {
     );
   }
 
-  // --- Screens ---
+ // --- Screens ---
   if (!currentRole) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-6 font-sans relative">
         <h1 className="text-4xl font-bold text-slate-800 mb-2 tracking-tight">Hall Pass Manager</h1>
         <p className="text-slate-500 mb-8">Select your portal to begin</p>
         
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full max-w-3xl">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 w-full max-w-4xl">
           <RoleButton icon={<Users />} title="Student Kiosk" desc="Classroom touch screen" color="blue" onClick={() => setCurrentRole('login_kiosk')} />
           <RoleButton icon={<Settings />} title="Teacher Login" desc="Manage your classroom" color="purple" onClick={() => setCurrentRole('login_teacher')} />
-          <RoleButton icon={<UserCog />} title="Substitute Access" desc="Assume a teacher role" color="orange" onClick={() => setCurrentRole('login_sub')} />
           <RoleButton icon={<Shield />} title="Admin Dashboard" desc="School-wide overview" color="emerald" onClick={() => setCurrentRole('login_admin')} />
         </div>
       </div>
@@ -309,44 +308,7 @@ service cloud.firestore {
       />
     );
   }
-
-  if (currentRole === 'login_sub') {
-    return (
-      <PinLogin 
-        title="Substitute Login"
-        subtitle="Enter Substitute PIN (Use '0000')"
-        expectedPin="0000"
-        onCancel={() => setCurrentRole(null)}
-        onLogin={() => setCurrentRole('substitute')}
-      />
-    );
-  }
-
-  if (currentRole === 'substitute') {
-    return (
-      <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-6">
-        <div className="w-full max-w-xl bg-white p-8 rounded-3xl shadow-lg border border-slate-200">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold text-slate-800">Who are you subbing for?</h2>
-            <button onClick={() => setCurrentRole(null)} className="text-slate-400 hover:text-slate-600 font-bold">Cancel</button>
-          </div>
-          <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
-            {teachers.map(teacher => (
-              <button 
-                key={teacher.id}
-                onClick={() => { setCurrentTeacher(teacher); setCurrentRole('teacher'); }}
-                className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-slate-100 hover:border-orange-400 hover:bg-orange-50 transition-colors text-left"
-              >
-                <span className="font-semibold text-lg text-slate-700">{teacher.name}</span>
-                <span className="text-slate-400 bg-white px-3 py-1 rounded-md text-sm border border-slate-200">Room {teacher.room}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  
   return (
     <div className="min-h-screen bg-slate-50">
       {currentRole === 'student' && (

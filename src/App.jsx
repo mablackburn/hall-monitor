@@ -1481,82 +1481,40 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
           <div className="animate-in fade-in duration-300">
             <header className="mb-8">
               <h2 className="text-3xl font-bold text-slate-800">Staff Directory</h2>
-              <p className="text-slate-500 mt-1">Manage personnel and teacher accounts.</p>
+              <p className="text-slate-500 mt-1">Manage personnel, rooms, and access PINs.</p>
             </header>
 
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[600px] max-w-4xl">
               <div className="flex justify-between items-center mb-6 shrink-0">
-                <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-blue-500"/> Teachers</h3>
-                <button onClick={() => { setEditingTeacher(null); setShowTeacherModal(true); }} className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-lg hover:bg-blue-100">+ Add Teacher</button>
+                <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-blue-500"/> Teachers & Staff</h3>
+                <button onClick={() => { setEditingTeacher(null); setShowTeacherModal(true); }} className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 flex items-center gap-1">
+                  <Plus className="w-4 h-4"/> Add Teacher
+                </button>
               </div>
-              <div className="space-y-6 overflow-y-auto flex-1 pr-2 pb-8">
-                {/* 1. Grouped Classes by Teacher */}
-                {teachers.map(teacher => {
-                  const teacherClasses = classes.filter(c => c.teacherId === teacher.id);
-                  if (teacherClasses.length === 0) return null; // Hide teachers with no classes
-                  
-                  return (
-                    <div key={teacher.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                      <div className="bg-slate-50 p-3 border-b border-slate-200 flex justify-between items-center">
-                        <h4 className="font-bold text-slate-700 flex items-center gap-2">
-                           <Users className="w-4 h-4 text-purple-500"/> {teacher.name}
-                        </h4>
-                        <span className="text-xs font-bold text-slate-500 bg-white px-2 py-1 rounded-md border border-slate-200 shadow-sm">{teacherClasses.length} Classes</span>
-                      </div>
-                      <div className="p-3 space-y-2">
-                        {teacherClasses.map(c => (
-                          <div key={c.id} className="p-3 rounded-lg border bg-white border-slate-100 flex justify-between items-center hover:border-purple-300 transition-colors">
-                            <div>
-                              <p className="font-bold text-slate-800">{c.name}</p>
-                              <p className="text-sm text-slate-500">{c.roster?.length || 0} Students</p>
-                              {(c.startTime || c.days) && (
-                                <p className="text-[10px] font-bold text-purple-600 mt-1 uppercase tracking-wider">{c.days} {c.startTime && c.endTime ? `(${c.startTime} - ${c.endTime})` : ''}</p>
-                              )}
-                            </div>
-                            <button onClick={() => { setEditingClass(c); setShowClassModal(true); }} className="text-slate-400 hover:text-purple-600 transition-colors bg-slate-50 hover:bg-purple-100 border border-slate-200 hover:border-purple-200 p-2 rounded-lg">
-                              <Settings className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {/* 2. Unassigned Classes (Safety Net) */}
-                {classes.filter(c => !teachers.some(t => t.id === c.teacherId)).length > 0 && (
-                  <div className="bg-white border border-red-200 rounded-xl overflow-hidden shadow-sm">
-                    <div className="bg-red-50 p-3 border-b border-red-200 flex justify-between items-center">
-                      <h4 className="font-bold text-red-700 flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4" /> Unassigned Classes
-                      </h4>
-                    </div>
-                    <div className="p-3 space-y-2">
-                      {classes.filter(c => !teachers.some(t => t.id === c.teacherId)).map(c => (
-                        <div key={c.id} className="p-3 rounded-lg border bg-white border-slate-100 flex justify-between items-center hover:border-red-300 transition-colors">
-                          <div>
-                            <p className="font-bold text-slate-800">{c.name}</p>
-                            <p className="text-sm text-slate-500">{c.roster?.length || 0} Students</p>
-                            {(c.startTime || c.days) && (
-                              <p className="text-[10px] font-bold text-red-600 mt-1 uppercase tracking-wider">{c.days} {c.startTime && c.endTime ? `(${c.startTime} - ${c.endTime})` : ''}</p>
-                            )}
-                          </div>
-                          <button onClick={() => { setEditingClass(c); setShowClassModal(true); }} className="text-slate-400 hover:text-red-600 transition-colors bg-slate-50 hover:bg-red-50 border border-slate-200 hover:border-red-200 p-2 rounded-lg">
-                            <Settings className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
+              <div className="space-y-3 overflow-y-auto flex-1 pr-2">
+                {teachers.length === 0 ? (
+                  <div className="p-8 border-2 border-dashed border-slate-200 rounded-2xl text-center bg-slate-50">
+                    <p className="text-slate-500 font-bold">No teachers added yet.</p>
                   </div>
-                )}
-
-                {/* 3. Empty State */}
-                {classes.length === 0 && (
-                   <div className="p-8 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center text-center bg-slate-50 mt-4">
-                      <BookOpen className="w-12 h-12 text-slate-300 mb-3" />
-                      <p className="text-slate-500 font-bold text-lg">No classes created yet.</p>
-                      <p className="text-slate-400 text-sm mt-1">Use the "Bulk Import" or "Add Class" buttons above to get started.</p>
-                   </div>
+                ) : (
+                  teachers.map(t => (
+                    <div key={t.id} className="flex justify-between items-center p-4 bg-slate-50 hover:bg-white rounded-xl border border-slate-100 hover:border-blue-200 transition-all shadow-sm">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-black text-xl shadow-inner">
+                          {t.name.charAt(0)}
+                        </div>
+                        <div>
+                          <p className="font-bold text-slate-800 text-lg">{t.name}</p>
+                          <p className="text-sm text-slate-500 font-medium mt-0.5">
+                            Room {t.room} <span className="mx-2 text-slate-300">|</span> PIN: <span className="font-mono text-slate-700 font-bold bg-slate-200 px-2 py-0.5 rounded tracking-widest">{t.pin}</span>
+                          </p>
+                        </div>
+                      </div>
+                      <button onClick={() => { setEditingTeacher(t); setShowTeacherModal(true); }} className="text-slate-400 hover:text-blue-600 bg-white border border-slate-200 p-2.5 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition-colors shadow-sm">
+                        <Settings className="w-5 h-5" />
+                      </button>
+                    </div>
+                  ))
                 )}
               </div>
             </div>

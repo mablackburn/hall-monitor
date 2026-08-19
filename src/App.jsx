@@ -1463,12 +1463,14 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
                       <th className="p-4 font-semibold border-b border-slate-200">Student</th>
                       <th className="p-4 font-semibold border-b border-slate-200">Teacher</th>
                       <th className="p-4 font-semibold border-b border-slate-200">Destination</th>
+                      <th className="p-4 font-semibold border-b border-slate-200">Time Out</th>
+                      <th className="p-4 font-semibold border-b border-slate-200">Time In</th>
                       <th className="p-4 font-semibold border-b border-slate-200 text-right">Duration</th>
                     </tr>
                   </thead>
                   <tbody>
                     {passHistory.length === 0 ? (
-                       <tr><td colSpan="5" className="p-4 text-center text-slate-500">No pass history recorded yet.</td></tr>
+                       <tr><td colSpan="7" className="p-4 text-center text-slate-500">No pass history recorded yet.</td></tr>
                     ) : (
                       passHistory.map(log => {
                         const startTime = log.startTime ? new Date(log.startTime) : new Date();
@@ -1477,12 +1479,19 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
                         const durationMins = Math.floor(durationMs / 60000);
                         const durationSecs = Math.floor((durationMs % 60000) / 1000).toString().padStart(2, '0');
                         const flag = durationMins >= 10;
+                        
+                        // Format the raw Date objects into readable clock times
+                        const timeOutStr = startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        const timeInStr = endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
                         return (
                           <tr key={log.id} className={`border-b border-slate-50 hover:bg-slate-50 ${flag ? 'bg-red-50/50' : ''}`}>
                             <td className="p-4 text-slate-500 text-sm">{endTime.toLocaleDateString()}</td>
                             <td className="p-4 font-bold text-slate-800">{log.student?.name || 'Unknown'}</td>
                             <td className="p-4 text-slate-600">{log.teacher?.name || 'Unknown'}</td>
                             <td className="p-4 text-slate-600">{log.destination?.label || 'Unknown'}</td>
+                            <td className="p-4 text-slate-600 font-mono text-sm">{timeOutStr}</td>
+                            <td className="p-4 text-slate-600 font-mono text-sm">{timeInStr}</td>
                             <td className="p-4 text-right">
                               <span className={`font-mono font-bold px-2 py-1 rounded-md ${flag ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>
                                 {durationMins}:{durationSecs}

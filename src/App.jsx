@@ -273,6 +273,16 @@ export default function App() {
     await batch.commit();
   };
 
+  const handleBulkAddClasses = async (newClasses) => {
+    if (!user) return;
+    const batch = writeBatch(db);
+    newClasses.forEach(c => {
+      const docRef = doc(collection(db, 'classes'), c.id || 'c' + Date.now() + Math.random().toString(36).substring(7));
+      batch.set(docRef, c);
+    });
+    await batch.commit();
+  };
+
   const handleMassDeleteStudents = async () => {
     if (!user) return;
     const batch = writeBatch(db);
@@ -400,6 +410,7 @@ service cloud.firestore {
         <TeacherView 
           onSwitchRole={() => { setCurrentRole(null); setCurrentTeacher(null); }} 
           teacher={currentTeacher}
+          teachers={teachers}
           globalPasses={globalPasses}
           pendingPasses={pendingPasses.filter(p => p.teacher.id === currentTeacher.id)}
           onApprove={handleApprovePass}
@@ -430,6 +441,7 @@ service cloud.firestore {
           classes={classes}
           onSaveClass={(c) => saveDoc('classes', c.id || 'c' + Date.now(), c)}
           onDeleteClass={(id) => delDoc('classes', id)}
+          onBulkAddClasses={handleBulkAddClasses}
           schedules={schedules}
           onSaveSchedule={(s) => saveDoc('schedules', s.id || 'sch_' + Date.now(), s)}
           onDeleteSchedule={(id) => delDoc('schedules', id)}
@@ -584,6 +596,23 @@ function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onReq
   if (activePeriod) {
     activeClass = classes.find(c => c.teacherId === teacher.id && activePeriod.classIds.includes(c.id));
   }
+  
+  if (!activeClass) {
+     const dayMap = { 0: 'Su', 1: 'M', 2: 'Tu', 3: 'W', 4: 'Th', 5: 'F', 6: 'Sa' };
+     const currentDayCode = dayMap[new Date().getDay()];
+     
+     activeClass = classes.find(c => {
+        if (c.teacherId !== teacher.id) return false;
+        if (!c.startTime || !c.endTime || !c.days) return false;
+        if (!c.days.includes(currentDayCode)) return false;
+        
+        const [sh, sm] = c.startTime.split(':').map(Number);
+        const [eh, em] = c.endTime.split(':').map(Number);
+        const startMins = sh * 60 + sm;
+        const endMins = eh * 60 + em;
+        return currentMins >= startMins && currentMins <= endMins;
+     });
+  }
 
   const isFallback = !activeClass;
   if (!activeClass) {
@@ -625,7 +654,9 @@ function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onReq
         </div>
 
         <div className="flex flex-col items-center">
-          <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">{activePeriod ? activePeriod.name : 'Passing Period'}</span>
+          <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">
+             {activePeriod ? activePeriod.name : (activeClass.startTime ? 'Scheduled Class' : 'Passing Period')}
+          </span>
           <span className={`text-lg font-black ${isFallback ? 'text-slate-500 italic' : 'text-emerald-400'}`}>{activeClass.name}</span>
         </div>
 
@@ -818,9 +849,17 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
   const [showCreatePassModal, setShowCreatePassModal] = useState(false);
   const [selectedStudentForPass, setSelectedStudentForPass] = useState(null);
   
-  // New states for the retroactive time menu
+  // Retroactive Pass States
   const [showRetroactiveStep, setShowRetroactiveStep] = useState(false);
   const [customRetroTime, setCustomRetroTime] = useState('');
+
+  // New Override & Pull Student States
+  const [overrideClassId, setOverrideClassId] = useState(null);
+  const [showSwitchClassModal, setShowSwitchClassModal] = useState(false);
+  
+  const [pulledStudents, setPulledStudents] = useState([]);
+  const [showPullStudentsModal, setShowPullStudentsModal] = useState(false);
+  const [selectedPullClassId, setSelectedPullClassId] = useState('');
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -844,17 +883,45 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
     return currentMins >= (sh * 60 + sm) && currentMins <= (eh * 60 + em);
   });
 
+  // 1. Determine which class is active (Override -> Schedule -> Intrinsic Time -> Fallback)
   let activeClass = null;
-  if (activePeriod) {
-    activeClass = classes.find(c => c.teacherId === teacher.id && activePeriod.classIds.includes(c.id));
+  if (overrideClassId) {
+    activeClass = classes.find(c => c.id === overrideClassId);
+  } else {
+    if (activePeriod) {
+      activeClass = classes.find(c => c.teacherId === teacher.id && activePeriod.classIds.includes(c.id));
+    }
+    
+    // Check intrinsic times if no schedule matched
+    if (!activeClass) {
+       const dayMap = { 0: 'Su', 1: 'M', 2: 'Tu', 3: 'W', 4: 'Th', 5: 'F', 6: 'Sa' };
+       const currentDayCode = dayMap[new Date().getDay()];
+       
+       activeClass = classes.find(c => {
+          if (c.teacherId !== teacher.id) return false;
+          if (!c.startTime || !c.endTime || !c.days) return false;
+          if (!c.days.includes(currentDayCode)) return false;
+          
+          const [sh, sm] = c.startTime.split(':').map(Number);
+          const [eh, em] = c.endTime.split(':').map(Number);
+          const startMins = sh * 60 + sm;
+          const endMins = eh * 60 + em;
+          return currentMins >= startMins && currentMins <= endMins;
+       });
+    }
+
+    if (!activeClass) {
+      activeClass = classes.find(c => c.teacherId === teacher.id) || { roster: [], name: 'No Class Assigned' };
+    }
   }
   
-  const isFallback = !activeClass;
-  if (!activeClass) {
-    activeClass = classes.find(c => c.teacherId === teacher.id) || { roster: [], name: 'No Class Assigned' };
-  }
+  const isFallback = !activeClass.id && !overrideClassId;
 
-  const availableStudents = activeClass.roster.filter(
+  // 2. Combine the base roster with any pulled-in students and remove duplicates
+  const combinedRoster = [...(activeClass.roster || []), ...pulledStudents];
+  const uniqueRoster = Array.from(new Map(combinedRoster.map(item => [item.id, item])).values());
+
+  const availableStudents = uniqueRoster.filter(
     student => !myActivePasses.some(pass => pass.student.id === student.id) &&
                !pendingPasses.some(pass => pass.student.id === student.id)
   );
@@ -890,7 +957,76 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
       </aside>
 
       <main className="flex-1 p-8 overflow-y-auto relative">
-        {/* TEACHER INITIATED PASS MODAL */}
+        
+        {/* MODAL: Switch Active Class */}
+        {showSwitchClassModal && (
+          <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95 duration-200">
+              <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+                 <h3 className="text-2xl font-bold text-slate-800">Override Active Class</h3>
+                 <button onClick={() => setShowSwitchClassModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-6 h-6"/></button>
+              </div>
+              <div className="p-6 overflow-y-auto">
+                 <p className="text-slate-500 mb-6">Select a different class to monitor. This will temporarily replace your scheduled roster.</p>
+                 <button onClick={() => { setOverrideClassId(null); setShowSwitchClassModal(false); }} className="w-full p-4 mb-4 bg-slate-100 rounded-xl font-bold text-slate-700 hover:bg-slate-200 border-2 border-transparent transition-colors">
+                    Revert to Automatic Schedule
+                 </button>
+                 <div className="grid grid-cols-2 gap-4">
+                   {classes.map(c => (
+                      <button key={c.id} onClick={() => { setOverrideClassId(c.id); setShowSwitchClassModal(false); }} className="p-4 border-2 border-slate-100 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all font-bold text-slate-700 text-left">
+                         {c.name}
+                         <span className="block text-sm text-slate-500 font-normal mt-1">{c.roster?.length || 0} Students Assigned</span>
+                      </button>
+                   ))}
+                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: Pull In Students */}
+        {showPullStudentsModal && (
+          <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95 duration-200">
+              <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+                 <h3 className="text-2xl font-bold text-slate-800">Pull Students to Your Room</h3>
+                 <button onClick={() => setShowPullStudentsModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-6 h-6"/></button>
+              </div>
+              <div className="p-6 overflow-y-auto flex-1">
+                 <p className="text-slate-500 mb-4">Select a class to view its roster and add specific students to your dashboard for this period.</p>
+                 <select value={selectedPullClassId} onChange={e => setSelectedPullClassId(e.target.value)} className="w-full p-3 border border-slate-200 bg-slate-50 rounded-xl mb-6 focus:ring-2 focus:ring-purple-500 outline-none font-semibold text-slate-700">
+                    <option value="">-- Select a class to pull from --</option>
+                    {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                 </select>
+
+                 {selectedPullClassId && (
+                    <div className="grid grid-cols-2 gap-3">
+                       {classes.find(c => c.id === selectedPullClassId)?.roster.map(s => {
+                          const isPulled = pulledStudents.some(ps => ps.id === s.id);
+                          return (
+                            <button key={s.id} onClick={() => {
+                               if(isPulled) {
+                                  setPulledStudents(pulledStudents.filter(ps => ps.id !== s.id));
+                               } else {
+                                  setPulledStudents([...pulledStudents, s]);
+                               }
+                            }} className={`p-3 rounded-xl border-2 font-bold text-left flex justify-between items-center transition-all ${isPulled ? 'border-purple-500 bg-purple-50 text-purple-700 shadow-sm' : 'border-slate-100 hover:border-purple-300 text-slate-700'}`}>
+                               {s.name}
+                               {isPulled ? <Check className="w-5 h-5"/> : <Plus className="w-4 h-4 text-slate-400"/>}
+                            </button>
+                          )
+                       })}
+                    </div>
+                 )}
+              </div>
+              <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+                 <button onClick={() => setShowPullStudentsModal(false)} className="px-8 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl transition-colors shadow-sm">Done</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: TEACHER INITIATED PASS */}
         {showCreatePassModal && (
           <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-3xl shadow-xl w-full max-w-4xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
@@ -985,7 +1121,6 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
                         </button>
                       ))}
                       
-                      {/* NEW RETROACTIVE BUTTON */}
                       <button
                         onClick={() => setShowRetroactiveStep(true)}
                         className="bg-white p-6 rounded-2xl shadow-sm border-2 border-slate-100 hover:border-red-500 hover:bg-red-50 transition-all flex flex-col items-center justify-center gap-3 relative overflow-hidden group"
@@ -997,35 +1132,6 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
                   </div>
                 )}
               </div>
-            </div>
-          </div>
-        )}
-
-        {pendingPasses.length > 0 && (
-          <div className="mb-8 bg-yellow-50 border-2 border-yellow-400 rounded-2xl p-6 shadow-md animate-in fade-in slide-in-from-top-4">
-            <h3 className="text-xl font-bold text-yellow-800 flex items-center gap-2 mb-4">
-              <AlertTriangle className="w-6 h-6" /> Pending Pass Approvals ({pendingPasses.length})
-            </h3>
-            <div className="space-y-3">
-              {pendingPasses.map(pass => (
-                <div key={pass.id} className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-yellow-200">
-                  <div className="flex items-center gap-4">
-                    <span className="text-3xl">{pass.destination.icon}</span>
-                    <div>
-                      <p className="font-bold text-lg text-slate-800">{pass.student.name}</p>
-                      <p className="text-slate-500">Requested to go to the <span className="font-semibold">{pass.destination.label}</span></p>
-                    </div>
-                  </div>
-                  <div className="flex gap-3">
-                    <button onClick={() => onDeny(pass.id)} className="px-4 py-2 bg-slate-100 hover:bg-red-100 hover:text-red-700 text-slate-600 font-semibold rounded-lg flex items-center gap-2 transition-colors">
-                      <X className="w-5 h-5" /> Deny
-                    </button>
-                    <button onClick={() => onApprove(pass.id)} className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg flex items-center gap-2 shadow-sm transition-colors">
-                      <Check className="w-5 h-5" /> Approve
-                    </button>
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
         )}
@@ -1077,17 +1183,27 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
             
             <div className={`p-6 rounded-2xl border-2 flex justify-between items-center ${isFallback ? 'bg-slate-50 border-slate-200' : 'bg-purple-50 border-purple-200 shadow-sm'}`}>
               <div>
-                <p className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-1">{activePeriod ? activePeriod.name : 'Passing Period / Outside Hours'}</p>
+                <p className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  {overrideClassId ? 'Manual Override Active' : activePeriod ? activePeriod.name : (activeClass.startTime ? 'Scheduled Class' : 'Passing Period')}
+                </p>
                 <h2 className="text-3xl font-black text-slate-800">{activeClass.name}</h2>
+                {pulledStudents.length > 0 && (
+                   <p className="text-purple-600 font-bold mt-2 flex items-center gap-1"><Users className="w-4 h-4"/> + {pulledStudents.length} Guest Students Pulled In</p>
+                )}
               </div>
               <div className="text-right hidden sm:block">
                 <p className="text-xl font-bold text-slate-700">{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                {activePeriod && <p className="text-sm text-slate-500">Ends at {formatTimeStr(activePeriod.endTime)}</p>}
+                {activePeriod && !overrideClassId && <p className="text-sm text-slate-500">Ends at {formatTimeStr(activePeriod.endTime)}</p>}
+                
+                <div className="flex gap-2 mt-3 justify-end">
+                  <button onClick={() => setShowSwitchClassModal(true)} className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-50 shadow-sm transition-colors">Switch Class</button>
+                  <button onClick={() => setShowPullStudentsModal(true)} className="px-3 py-1.5 bg-purple-100 border border-purple-200 rounded-lg text-sm font-bold text-purple-700 hover:bg-purple-200 shadow-sm transition-colors">Pull Students</button>
+                </div>
               </div>
             </div>
 
             <div className="grid grid-cols-3 gap-4">
-              <StatCard title="Present" value={activeClass.roster.length - myActivePasses.length} subtitle="Students in room" color="blue" />
+              <StatCard title="Present" value={combinedRoster.length - myActivePasses.length} subtitle="Students in room" color="blue" />
               <StatCard title="Out on Pass" value={myActivePasses.length} subtitle="From your class" color="emerald" />
               <StatCard title="Hall Traffic" value={globalPasses.length} subtitle="School-wide active" color="orange" />
             </div>
@@ -1215,7 +1331,7 @@ function TeacherDashboardPassRow({ pass, isMine, onEndPass }) {
   );
 }
 
-function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teachers, onSaveTeacher, onDeleteTeacher, students, onSaveStudent, onDeleteStudent, onBulkAddStudents, onMassDeleteStudents, onClearPassHistory, classes, onSaveClass, onDeleteClass, schedules, onSaveSchedule, onDeleteSchedule, calendarDays, onSaveCalendarDay }) {
+function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teachers, onSaveTeacher, onDeleteTeacher, students, onSaveStudent, onDeleteStudent, onBulkAddStudents, onMassDeleteStudents, onClearPassHistory, classes, onSaveClass, onDeleteClass, onBulkAddClasses, schedules, onSaveSchedule, onDeleteSchedule, calendarDays, onSaveCalendarDay }) {
   const [activeTab, setActiveTab] = useState('live');
 
   const [showTeacherModal, setShowTeacherModal] = useState(false);
@@ -1228,6 +1344,7 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
   
   const [showClassModal, setShowClassModal] = useState(false);
   const [editingClass, setEditingClass] = useState(null);
+  const [showBulkAddClassesModal, setShowBulkAddClassesModal] = useState(false);
 
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState(null);
@@ -1388,7 +1505,10 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[600px] max-w-4xl">
               <div className="flex justify-between items-center mb-6 shrink-0">
                 <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><BookOpen className="w-5 h-5 text-purple-500"/> Master Class List</h3>
-                <button onClick={() => { setEditingClass(null); setShowClassModal(true); }} className="text-sm font-bold text-purple-600 bg-purple-50 px-3 py-1 rounded-lg hover:bg-purple-100">+ Add Class</button>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowBulkAddClassesModal(true)} className="text-sm font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-lg hover:bg-slate-200 flex items-center gap-1"><Upload className="w-4 h-4"/> Bulk Import</button>
+                  <button onClick={() => { setEditingClass(null); setShowClassModal(true); }} className="text-sm font-bold text-purple-600 bg-purple-50 px-3 py-1.5 rounded-lg hover:bg-purple-100">+ Add Class</button>
+                </div>
               </div>
               <div className="space-y-3 overflow-y-auto flex-1 pr-2">
                 {classes.map(c => {
@@ -1398,6 +1518,9 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
                       <div>
                         <p className="font-bold text-slate-800 text-lg">{c.name}</p>
                         <p className="text-sm text-slate-500">Instructor: {assignedTeacher ? assignedTeacher.name : 'Unassigned'} • {c.roster?.length || 0} Students</p>
+                        {(c.startTime || c.days) && (
+                          <p className="text-xs font-bold text-purple-600 mt-1 uppercase tracking-wider">{c.days} {c.startTime && c.endTime ? `(${c.startTime} - ${c.endTime})` : ''}</p>
+                        )}
                       </div>
                       <button onClick={() => { setEditingClass(c); setShowClassModal(true); }} className="text-slate-400 hover:text-purple-600 transition-colors"><Settings className="w-5 h-5" /></button>
                     </div>
@@ -1457,7 +1580,6 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
                           {gradeStudents.map(s => (
                             <tr key={s.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
                               <td className="p-3 pl-6 font-bold text-slate-800">{s.name}</td>
-                              <td className="p-3 text-slate-500 font-mono text-sm w-1/3">ID: {s.idNum || 'N/A'}</td>
                               <td className="p-3 pr-6 text-right">
                                 <button onClick={() => { setEditingStudent(s); setShowStudentModal(true); }} className="text-slate-400 hover:text-emerald-600 transition-colors bg-white border border-slate-200 hover:border-emerald-200 p-2 rounded-lg shadow-sm">
                                   <Settings className="w-4 h-4" />
@@ -1595,7 +1717,6 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
                         const durationSecs = Math.floor((durationMs % 60000) / 1000).toString().padStart(2, '0');
                         const flag = durationMins >= 10;
                         
-                        // Format the raw Date objects into readable clock times
                         const timeOutStr = startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                         const timeInStr = endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -1649,6 +1770,14 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
            <BulkAddModal 
              onClose={() => setShowBulkAddModal(false)}
              onSave={onBulkAddStudents}
+           />
+        )}
+
+        {showBulkAddClassesModal && (
+           <BulkAddClassesModal
+             teachers={teachers}
+             onClose={() => setShowBulkAddClassesModal(false)}
+             onSave={onBulkAddClasses}
            />
         )}
 
@@ -1752,7 +1881,6 @@ function BulkAddModal({ onClose, onSave }) {
   const handleProcessCSV = () => {
     const lines = csvText.split('\n');
     const newStudents = lines.map(line => {
-       // Now only expects Name and Grade
        const [name, grade] = line.split(',').map(s => s?.trim());
        if(name) return { name, grade: grade || 'Fr' };
        return null;
@@ -1786,6 +1914,66 @@ function BulkAddModal({ onClose, onSave }) {
         <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
           <button onClick={handleProcessCSV} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 transition-colors shadow-sm">Import Students</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BulkAddClassesModal({ teachers, onClose, onSave }) {
+  const [csvText, setCsvText] = useState('');
+
+  const handleProcessCSV = () => {
+    const lines = csvText.split('\n');
+    const newClasses = lines.map(line => {
+       const parts = line.split(',').map(s => s?.trim());
+       const name = parts[0];
+       const teacherName = parts[1];
+       const startTime = parts[2] || '';
+       const endTime = parts[3] || '';
+       const days = parts[4] || '';
+       
+       if(name) {
+          const matchedTeacher = teachers.find(t => t.name.toLowerCase() === teacherName?.toLowerCase());
+          return {
+             name,
+             teacherId: matchedTeacher ? matchedTeacher.id : '',
+             startTime,
+             endTime,
+             days,
+             roster: []
+          };
+       }
+       return null;
+    }).filter(Boolean);
+    
+    if(newClasses.length > 0) onSave(newClasses);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+          <h3 className="font-bold text-lg text-slate-800">Bulk Import Classes</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="p-6">
+          <p className="text-slate-600 mb-4 text-sm">
+            Paste your class data below. Format each line exactly as:<br/>
+            <strong>Class Name, Teacher Name, Start Time (24h), End Time (24h), Days</strong>
+            <br/><span className="text-xs text-slate-400">Example: 7th Grade Math, Cody Blake, 14:30, 15:30, MTuWThF</span>
+          </p>
+          <textarea 
+            value={csvText}
+            onChange={(e) => setCsvText(e.target.value)}
+            placeholder="7th Grade Math, Cody Blake, 14:30, 15:30, MTuWThF&#10;Science 101, Sarah Smith, 08:00, 09:00, MWF"
+            className="w-full h-64 p-4 font-mono text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+          />
+        </div>
+        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+          <button onClick={handleProcessCSV} className="px-6 py-2 bg-purple-600 text-white font-bold rounded-lg hover:bg-purple-700 transition-colors shadow-sm">Import Classes</button>
         </div>
       </div>
     </div>
@@ -1896,7 +2084,6 @@ function TeacherModal({ teacher, onClose, onSave, onDelete }) {
 }
 
 function StudentModal({ student, defaultGrade, onClose, onSave, onDelete }) {
-  // Removed idNum from initial state
   const [formData, setFormData] = useState(student || { name: '', grade: defaultGrade || 'Fr' });
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -1952,7 +2139,7 @@ function StudentModal({ student, defaultGrade, onClose, onSave, onDelete }) {
 }
 
 function ClassModal({ classItem, teachers, students, onClose, onSave, onDelete }) {
-  const [formData, setFormData] = useState(classItem || { name: '', teacherId: '', roster: [] });
+  const [formData, setFormData] = useState(classItem || { name: '', teacherId: '', startTime: '', endTime: '', days: '', roster: [] });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [gradeFilter, setGradeFilter] = useState('All');
 
@@ -1997,6 +2184,21 @@ function ClassModal({ classItem, teachers, students, onClose, onSave, onDelete }
             </div>
           </div>
 
+          <div className="grid grid-cols-3 gap-4 mb-6 shrink-0">
+            <div>
+               <label className="block text-sm font-bold text-slate-600 mb-1">Start Time</label>
+               <input type="time" name="startTime" value={formData.startTime || ''} onChange={handleChange} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
+            <div>
+               <label className="block text-sm font-bold text-slate-600 mb-1">End Time</label>
+               <input type="time" name="endTime" value={formData.endTime || ''} onChange={handleChange} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
+            <div>
+               <label className="block text-sm font-bold text-slate-600 mb-1">Days</label>
+               <input name="days" value={formData.days || ''} onChange={handleChange} placeholder="e.g. MTuWThF" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
+          </div>
+
           <div className="flex-1 min-h-[350px] border-t border-slate-100 pt-6 flex flex-col">
             <h4 className="font-bold text-slate-700 mb-4">Roster Management</h4>
             <div className="grid grid-cols-2 gap-8 flex-1 h-full">
@@ -2020,7 +2222,6 @@ function ClassModal({ classItem, teachers, students, onClose, onSave, onDelete }
                     <button key={s.id} onClick={() => handleAddStudent(s)} className="w-full flex justify-between items-center p-2 bg-white rounded-lg border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left group">
                       <div>
                         <p className="font-semibold text-slate-700">{s.name}</p>
-                        <p className="text-xs text-slate-400 font-mono">ID: {s.idNum || 'N/A'}</p>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${getGradeBadgeClass(s.grade)}`}>
@@ -2049,7 +2250,6 @@ function ClassModal({ classItem, teachers, students, onClose, onSave, onDelete }
                     <button key={s.id} onClick={() => handleRemoveStudent(s.id)} className="w-full flex justify-between items-center p-2 bg-white rounded-lg border border-purple-100 hover:border-red-300 hover:bg-red-50 transition-all text-left group">
                        <div>
                         <p className="font-semibold text-slate-700 group-hover:text-red-700">{s.name}</p>
-                        <p className="text-xs text-slate-400 group-hover:text-red-400 font-mono">ID: {s.idNum || 'N/A'}</p>
                       </div>
                       <div className="w-7 h-7 rounded-full bg-slate-50 group-hover:bg-red-200 text-slate-400 group-hover:text-red-600 flex items-center justify-center transition-colors">
                          <X className="w-4 h-4" />

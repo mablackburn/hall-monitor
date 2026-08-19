@@ -752,9 +752,12 @@ function MiniPassBanner({ pass, onClick }) {
   );
 }
 
-function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApprove, onDeny, onEndPass, classes, todayScheduleData }) {
+function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApprove, onDeny, onEndPass, onTeacherInitiatePass, isHallwayBusy, classes, todayScheduleData }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [currentTime, setCurrentTime] = useState(new Date());
+
+  const [showCreatePassModal, setShowCreatePassModal] = useState(false);
+  const [selectedStudentForPass, setSelectedStudentForPass] = useState(null);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -780,6 +783,11 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
   if (!activeClass) {
     activeClass = classes.find(c => c.teacherId === teacher.id) || { roster: [], name: 'No Class Assigned' };
   }
+
+  const availableStudents = activeClass.roster.filter(
+    student => !myActivePasses.some(pass => pass.student.id === student.id) &&
+               !pendingPasses.some(pass => pass.student.id === student.id)
+  );
 
   const formatTimeStr = (time24) => {
     const [h, m] = time24.split(':');
@@ -811,7 +819,66 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
         </div>
       </aside>
 
-      <main className="flex-1 p-8 overflow-y-auto">
+      <main className="flex-1 p-8 overflow-y-auto relative">
+        {/* TEACHER INITIATED PASS MODAL */}
+        {showCreatePassModal && (
+          <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl shadow-xl w-full max-w-4xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex justify-between items-center p-6 border-b border-slate-100 bg-slate-50">
+                <h3 className="font-bold text-2xl text-slate-800">
+                  {selectedStudentForPass ? `Where is ${selectedStudentForPass.name} going?` : 'Select Student to Leave Room'}
+                </h3>
+                <button onClick={() => { setShowCreatePassModal(false); setSelectedStudentForPass(null); }} className="text-slate-400 hover:text-slate-600">
+                  <X className="w-6 h-6"/>
+                </button>
+              </div>
+              <div className="p-6 max-h-[60vh] overflow-y-auto">
+                {!selectedStudentForPass ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {availableStudents.length === 0 && <p className="col-span-full text-center text-slate-500 py-4">No available students.</p>}
+                    {availableStudents.map(student => (
+                      <button
+                        key={student.id}
+                        onClick={() => setSelectedStudentForPass(student)}
+                        className="bg-white p-4 rounded-xl shadow-sm border-2 border-slate-100 hover:border-purple-500 hover:shadow-md transition-all font-semibold text-slate-700 text-center"
+                      >
+                        {student.name}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div>
+                    <button onClick={() => setSelectedStudentForPass(null)} className="mb-6 text-sm font-bold text-slate-500 hover:text-purple-600 flex items-center gap-1">
+                      <ChevronLeft className="w-4 h-4" /> Back to Students
+                    </button>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      {DESTINATIONS.map(dest => (
+                        <button
+                          key={dest.id}
+                          onClick={() => { 
+                            onTeacherInitiatePass(selectedStudentForPass, dest); 
+                            setShowCreatePassModal(false); 
+                            setSelectedStudentForPass(null); 
+                          }}
+                          className="bg-white p-6 rounded-2xl shadow-sm border-2 border-slate-100 hover:border-purple-500 transition-all flex flex-col items-center gap-3 relative overflow-hidden"
+                        >
+                          {isHallwayBusy && dest.id !== 'office' && (
+                            <div className="absolute top-0 right-0 bg-orange-100 text-orange-700 text-[10px] px-2 py-1 rounded-bl-lg font-bold">
+                              Override Auto-Applied
+                            </div>
+                          )}
+                          <span className="text-4xl">{dest.icon}</span>
+                          <span className="font-bold text-slate-700">{dest.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {pendingPasses.length > 0 && (
           <div className="mb-8 bg-yellow-50 border-2 border-yellow-400 rounded-2xl p-6 shadow-md animate-in fade-in slide-in-from-top-4">
             <h3 className="text-xl font-bold text-yellow-800 flex items-center gap-2 mb-4">
@@ -846,6 +913,12 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
             <h1 className="text-3xl font-bold text-slate-800">Dashboard</h1>
             <p className="text-slate-500 mt-1">Overview of your class and hallway activity.</p>
           </div>
+          <button 
+            onClick={() => setShowCreatePassModal(true)} 
+            className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl shadow-sm flex items-center gap-2 transition-colors"
+          >
+            <Plus className="w-5 h-5" /> Start Pass
+          </button>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

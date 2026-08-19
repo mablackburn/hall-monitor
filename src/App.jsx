@@ -204,6 +204,23 @@ export default function App() {
     };
   };
 
+  const handleTeacherInitiatePass = async (student, destination, requestingTeacher) => {
+    if (!user) return { pass: null, status: 'error' };
+    
+    const newPassId = 'pass_' + Date.now();
+    const newPass = {
+      student: student,
+      teacher: requestingTeacher,
+      destination: destination,
+      requestTime: new Date().toISOString(),
+      startTime: new Date().toISOString(), // Automatically active, bypassing kiosk pending
+      status: 'active'
+    };
+
+    await setDoc(getDocumentRef('passes', newPassId), newPass);
+    return { pass: { id: newPassId, ...newPass, startTime: new Date(newPass.startTime) }, status: 'active' };
+  };
+
   const handleEndPass = async (passId) => {
     if (!user) return;
     const passRef = getDocumentRef('passes', passId);

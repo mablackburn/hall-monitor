@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Clock, CloudSun, MapPin, Users, Settings, BellRing, LogOut, CheckCircle2, AlertTriangle, UserCheck, ChevronLeft, Timer, Shield, UserCog, Check, X, Lock, KeyRound, CalendarDays, BookOpen, TrendingUp, LayoutDashboard, Filter, Download, Search, GraduationCap, Plus, Trash2, PlusCircle, Upload, Trash } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Clock, CloudSun, MapPin, Users, Settings, BellRing, LogOut, CheckCircle2, AlertTriangle, UserCheck, ChevronLeft, Timer, Shield, UserCog, Check, X, Lock, KeyRound, CalendarDays, BookOpen, TrendingUp, LayoutDashboard, Filter, Download, Search, GraduationCap, Plus, Trash2, PlusCircle, Upload, Trash, Volume2 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, writeBatch } from 'firebase/firestore';
@@ -20,7 +20,6 @@ const firebaseConfig = MY_FIREBASE_CONFIG;
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = 'production';
 
 const getColRef = (colName) => collection(db, colName); 
 const getDocumentRef = (colName, docId) => doc(db, colName, docId);
@@ -47,6 +46,14 @@ const DESTINATIONS = [
   { id: 'other', label: 'Other', icon: '❓' },
 ];
 
+// --- BELL SOUND CONFIGURATION ---
+export const BELL_SOUNDS = {
+  'none': { label: 'No Bell', url: null },
+  'classic': { label: 'Classic School Bell', url: '/Class Change Bell.mp3' },
+  'airport': { label: 'Airport Chime', url: '/Airport PA Chime.mp3' },
+  'japanese': { label: 'Japanese Chime', url: '/Japanese School Bell - Short.mov' }
+};
+
 export default function App() {
   const [currentRole, setCurrentRole] = useState(null);
   const [currentTeacher, setCurrentTeacher] = useState(null); 
@@ -58,8 +65,6 @@ export default function App() {
   const [teachers, setTeachers] = useState([]);
   const [students, setStudents] = useState([]);
   const [classes, setClasses] = useState([]);
-  const [schedules, setSchedules] = useState([]);
-  const [calendarOverrides, setCalendarOverrides] = useState([]);
 
   const [passes, setPasses] = useState([]);
   const globalPasses = passes.filter(p => p.status === 'active');
@@ -91,7 +96,8 @@ export default function App() {
   useEffect(() => {
     if (!user) return; 
     
-    const collections = ['teachers', 'students', 'classes', 'schedules', 'calendarDays', 'passes'];
+    // Notice: Removed schedules and calendarDays from syncing
+    const collections = ['teachers', 'students', 'classes', 'passes'];
     const unsubscribes = collections.map(colName => {
       const colRef = getColRef(colName);
       return onSnapshot(colRef, 
@@ -101,8 +107,6 @@ export default function App() {
           if (colName === 'teachers') setTeachers(data);
           if (colName === 'students') setStudents(data);
           if (colName === 'classes') setClasses(data);
-          if (colName === 'schedules') setSchedules(data);
-          if (colName === 'calendarDays') setCalendarOverrides(data);
           if (colName === 'passes') setPasses(data.map(p => ({
              ...p, 
              startTime: p.startTime ? new Date(p.startTime) : null,
@@ -120,63 +124,6 @@ export default function App() {
     });
     return () => unsubscribes.forEach(unsub => unsub());
   }, [user, retryCount]);
-
-  const activeCalendar = useMemo(() => {
-    const days = [];
-    let current = new Date();
-    current.setHours(0, 0, 0, 0); 
-
-    while (days.length < 10) {
-      const dayOfWeek = current.getDay();
-      if (dayOfWeek !== 0 && dayOfWeek !== 6) { 
-        const dateStr = current.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        const dayName = current.toLocaleDateString('en-US', { weekday: 'long' });
-        
-        const y = current.getFullYear();
-        const m = String(current.getMonth() + 1).padStart(2, '0');
-        const d = String(current.getDate()).padStart(2, '0');
-        const id = `cal_${y}_${m}_${d}`;
-        
-        days.push({ id, date: dateStr, day: dayName });
-      }
-      current.setDate(current.getDate() + 1);
-    }
-
-    return days.map(baseDay => {
-      const override = calendarOverrides.find(o => o.id === baseDay.id);
-      if (override) {
-        return { ...baseDay, scheduleIds: override.scheduleIds, isOverride: true };
-      }
-
-      const defaultScheduleIds = schedules
-        .filter(sch => sch.defaultDays && sch.defaultDays.includes(baseDay.day))
-        .map(sch => sch.id);
-      
-      return { ...baseDay, scheduleIds: defaultScheduleIds, isOverride: false };
-    });
-  }, [calendarOverrides, schedules]);
-
-  const todayScheduleData = useMemo(() => {
-    const today = new Date();
-    const y = today.getFullYear();
-    const m = String(today.getMonth() + 1).padStart(2, '0');
-    const d = String(today.getDate()).padStart(2, '0');
-    const todayId = `cal_${y}_${m}_${d}`;
-
-    const todayCal = activeCalendar.find(c => c.id === todayId);
-    if (!todayCal) return { activeSchedules: [], allPeriods: [] };
-
-    const activeSchedules = todayCal.scheduleIds.map(id => schedules.find(s => s.id === id)).filter(Boolean);
-    
-    let allPeriods = [];
-    activeSchedules.forEach(sch => {
-      if (sch.periods) allPeriods = [...allPeriods, ...sch.periods];
-    });
-
-    allPeriods.sort((a, b) => a.startTime.localeCompare(b.startTime));
-
-    return { activeSchedules, allPeriods };
-  }, [activeCalendar, schedules]);
 
   const isHallwayBusy = globalPasses.some(
     pass => pass.destination && pass.destination.id !== 'office'
@@ -213,7 +160,7 @@ export default function App() {
       teacher: requestingTeacher,
       destination: destination,
       requestTime: new Date().toISOString(),
-      startTime: new Date().toISOString(), // Automatically active, bypassing pending
+      startTime: new Date().toISOString(),
       status: 'active'
     };
 
@@ -226,7 +173,6 @@ export default function App() {
     
     const newPassId = 'pass_' + Date.now();
     const endTime = new Date();
-    // Calculate the start time by subtracting the minutes from right now
     const startTime = new Date(endTime.getTime() - durationMinutes * 60000);
     
     const newPass = {
@@ -236,7 +182,7 @@ export default function App() {
       requestTime: startTime.toISOString(),
       startTime: startTime.toISOString(),
       endTime: endTime.toISOString(),
-      status: 'completed' // Instantly marks it as finished
+      status: 'completed' 
     };
 
     await setDoc(getDocumentRef('passes', newPassId), newPass);
@@ -348,7 +294,6 @@ service cloud.firestore {
     );
   }
 
-  // --- Screens ---
   if (!currentRole) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-6 font-sans relative">
@@ -403,7 +348,6 @@ service cloud.firestore {
           onEndPass={handleEndPass}
           isHallwayBusy={isHallwayBusy}
           classes={classes}
-          todayPeriods={todayScheduleData.allPeriods}
         />
       )}
       {currentRole === 'teacher' && (
@@ -420,7 +364,7 @@ service cloud.firestore {
           onRetroactivePass={(s, mins) => handleRetroactivePass(s, mins, currentTeacher)}
           isHallwayBusy={isHallwayBusy}
           classes={classes}
-          todayScheduleData={todayScheduleData}
+          onSaveClass={(c) => saveDoc('classes', c.id, c)}
         />
       )}
       {currentRole === 'admin' && (
@@ -442,17 +386,6 @@ service cloud.firestore {
           onSaveClass={(c) => saveDoc('classes', c.id || 'c' + Date.now(), c)}
           onDeleteClass={(id) => delDoc('classes', id)}
           onBulkAddClasses={handleBulkAddClasses}
-          schedules={schedules}
-          onSaveSchedule={(s) => saveDoc('schedules', s.id || 'sch_' + Date.now(), s)}
-          onDeleteSchedule={(id) => delDoc('schedules', id)}
-          calendarDays={activeCalendar}
-          onSaveCalendarDay={(d) => {
-            if (!d.isOverride) {
-              delDoc('calendarDays', d.id);
-            } else {
-              saveDoc('calendarDays', d.id, d);
-            }
-          }}
         />
       )}
     </div>
@@ -572,7 +505,7 @@ function RoleButton({ icon, title, desc, color, onClick }) {
   );
 }
 
-function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onRequestPass, onEndPass, isHallwayBusy, classes, todayPeriods }) {
+function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onRequestPass, onEndPass, isHallwayBusy, classes }) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [viewingPass, setViewingPass] = useState(null);
   const [selectedStudent, setSelectedStudent] = useState(null);
@@ -584,35 +517,21 @@ function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onReq
   }, []);
 
   const timeString = currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
   const currentMins = currentTime.getHours() * 60 + currentTime.getMinutes();
-  const activePeriod = todayPeriods.find(p => {
-    const [sh, sm] = p.startTime.split(':').map(Number);
-    const [eh, em] = p.endTime.split(':').map(Number);
-    return currentMins >= (sh * 60 + sm) && currentMins <= (eh * 60 + em);
-  });
 
   let activeClass = null;
-  if (activePeriod) {
-    activeClass = classes.find(c => c.teacherId === teacher.id && activePeriod.classIds.includes(c.id));
-  }
+  const dayMap = { 0: 'Su', 1: 'M', 2: 'Tu', 3: 'W', 4: 'Th', 5: 'F', 6: 'Sa' };
+  const currentDayCode = dayMap[new Date().getDay()];
   
-  if (!activeClass) {
-     const dayMap = { 0: 'Su', 1: 'M', 2: 'Tu', 3: 'W', 4: 'Th', 5: 'F', 6: 'Sa' };
-     const currentDayCode = dayMap[new Date().getDay()];
-     
-     activeClass = classes.find(c => {
-        if (c.teacherId !== teacher.id) return false;
-        if (!c.startTime || !c.endTime || !c.days) return false;
-        if (!c.days.includes(currentDayCode)) return false;
-        
-        const [sh, sm] = c.startTime.split(':').map(Number);
-        const [eh, em] = c.endTime.split(':').map(Number);
-        const startMins = sh * 60 + sm;
-        const endMins = eh * 60 + em;
-        return currentMins >= startMins && currentMins <= endMins;
-     });
-  }
+  activeClass = classes.find(c => {
+    if (c.teacherId !== teacher.id) return false;
+    if (!c.startTime || !c.endTime || !c.days) return false;
+    if (!c.days.includes(currentDayCode)) return false;
+    
+    const [sh, sm] = c.startTime.split(':').map(Number);
+    const [eh, em] = c.endTime.split(':').map(Number);
+    return currentMins >= (sh * 60 + sm) && currentMins <= (eh * 60 + em);
+  });
 
   const isFallback = !activeClass;
   if (!activeClass) {
@@ -655,7 +574,7 @@ function StudentView({ onSwitchRole, teacher, globalPasses, pendingPasses, onReq
 
         <div className="flex flex-col items-center">
           <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">
-             {activePeriod ? activePeriod.name : (activeClass.startTime ? 'Scheduled Class' : 'Passing Period')}
+             {activeClass.startTime && !isFallback ? 'Scheduled Class' : 'Passing Period'}
           </span>
           <span className={`text-lg font-black ${isFallback ? 'text-slate-500 italic' : 'text-emerald-400'}`}>{activeClass.name}</span>
         </div>
@@ -842,7 +761,7 @@ function MiniPassBanner({ pass, onClick }) {
   );
 }
 
-function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApprove, onDeny, onEndPass, onTeacherInitiatePass, onRetroactivePass, isHallwayBusy, classes, todayScheduleData }) {
+function TeacherView({ onSwitchRole, teacher, teachers, globalPasses, pendingPasses, onApprove, onDeny, onEndPass, onTeacherInitiatePass, onRetroactivePass, isHallwayBusy, classes, onSaveClass }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -853,7 +772,7 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
   const [showRetroactiveStep, setShowRetroactiveStep] = useState(false);
   const [customRetroTime, setCustomRetroTime] = useState('');
 
-  // New Override & Pull Student States
+  // Override & Pull Student States
   const [overrideClassId, setOverrideClassId] = useState(null);
   const [showSwitchClassModal, setShowSwitchClassModal] = useState(false);
   
@@ -861,10 +780,46 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
   const [showPullStudentsModal, setShowPullStudentsModal] = useState(false);
   const [selectedPullClassId, setSelectedPullClassId] = useState('');
 
+  // Automated Bell Audio State
+  const [lastPlayedTime, setLastPlayedTime] = useState('');
+
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const currentMins = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const dayMap = { 0: 'Su', 1: 'M', 2: 'Tu', 3: 'W', 4: 'Th', 5: 'F', 6: 'Sa' };
+  const currentDayCode = dayMap[currentTime.getDay()];
+
+  // Sort and filter the teacher's classes for today
+  const myClassesToday = classes
+    .filter(c => c.teacherId === teacher.id && c.days && c.days.includes(currentDayCode))
+    .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+
+  // Automated Bell Trigger
+  useEffect(() => {
+    const hh = String(currentTime.getHours()).padStart(2, '0');
+    const mm = String(currentTime.getMinutes()).padStart(2, '0');
+    const now24 = `${hh}:${mm}`;
+
+    if (now24 !== lastPlayedTime) {
+      let played = false;
+      myClassesToday.forEach(c => {
+        if (c.startTime === now24 && c.startBell && c.startBell !== 'none') {
+          const soundUrl = BELL_SOUNDS[c.startBell]?.url;
+          if (soundUrl) { new Audio(soundUrl).play().catch(e => console.log("Audio play blocked by browser:", e)); played = true; }
+        }
+        if (c.endTime === now24 && c.endBell && c.endBell !== 'none') {
+          const soundUrl = BELL_SOUNDS[c.endBell]?.url;
+          if (soundUrl) { new Audio(soundUrl).play().catch(e => console.log("Audio play blocked by browser:", e)); played = true; }
+        }
+      });
+      if (played) {
+        setLastPlayedTime(now24);
+      }
+    }
+  }, [currentTime, myClassesToday, lastPlayedTime]);
 
   const closePassModal = () => {
     setShowCreatePassModal(false);
@@ -875,40 +830,19 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
   
   const myActivePasses = globalPasses.filter(p => p.teacher.id === teacher.id);
   const otherActivePasses = globalPasses.filter(p => p.teacher.id !== teacher.id);
-  
-  const currentMins = currentTime.getHours() * 60 + currentTime.getMinutes();
-  const activePeriod = todayScheduleData.allPeriods.find(p => {
-    const [sh, sm] = p.startTime.split(':').map(Number);
-    const [eh, em] = p.endTime.split(':').map(Number);
-    return currentMins >= (sh * 60 + sm) && currentMins <= (eh * 60 + em);
-  });
 
-  // 1. Determine which class is active (Override -> Schedule -> Intrinsic Time -> Fallback)
+  // Determine active class based on schedule or manual override
   let activeClass = null;
   if (overrideClassId) {
     activeClass = classes.find(c => c.id === overrideClassId);
   } else {
-    if (activePeriod) {
-      activeClass = classes.find(c => c.teacherId === teacher.id && activePeriod.classIds.includes(c.id));
-    }
-    
-    // Check intrinsic times if no schedule matched
-    if (!activeClass) {
-       const dayMap = { 0: 'Su', 1: 'M', 2: 'Tu', 3: 'W', 4: 'Th', 5: 'F', 6: 'Sa' };
-       const currentDayCode = dayMap[new Date().getDay()];
-       
-       activeClass = classes.find(c => {
-          if (c.teacherId !== teacher.id) return false;
-          if (!c.startTime || !c.endTime || !c.days) return false;
-          if (!c.days.includes(currentDayCode)) return false;
-          
-          const [sh, sm] = c.startTime.split(':').map(Number);
-          const [eh, em] = c.endTime.split(':').map(Number);
-          const startMins = sh * 60 + sm;
-          const endMins = eh * 60 + em;
-          return currentMins >= startMins && currentMins <= endMins;
-       });
-    }
+    activeClass = myClassesToday.find(c => {
+       const [sh, sm] = (c.startTime || '00:00').split(':').map(Number);
+       const [eh, em] = (c.endTime || '23:59').split(':').map(Number);
+       const startMins = sh * 60 + sm;
+       const endMins = eh * 60 + em;
+       return currentMins >= startMins && currentMins <= endMins;
+    });
 
     if (!activeClass) {
       activeClass = classes.find(c => c.teacherId === teacher.id) || { roster: [], name: 'No Class Assigned' };
@@ -917,7 +851,7 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
   
   const isFallback = !activeClass.id && !overrideClassId;
 
-  // 2. Combine the base roster with any pulled-in students and remove duplicates
+  // Combine roster and pulled-in students
   const combinedRoster = [...(activeClass.roster || []), ...pulledStudents];
   const uniqueRoster = Array.from(new Map(combinedRoster.map(item => [item.id, item])).values());
 
@@ -927,6 +861,7 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
   );
 
   const formatTimeStr = (time24) => {
+    if (!time24) return '';
     const [h, m] = time24.split(':');
     const d = new Date();
     d.setHours(h, m);
@@ -945,7 +880,6 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
         
         <nav className="flex-1 px-4 space-y-2">
           <TeacherNavLink icon={<MapPin />} label="Dashboard" isActive={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-          <TeacherNavLink icon={<UserCheck />} label="Roster & History" isActive={activeTab === 'roster'} onClick={() => setActiveTab('roster')} />
           <TeacherNavLink icon={<BellRing />} label="Bell Settings" isActive={activeTab === 'bells'} onClick={() => setActiveTab('bells')} />
         </nav>
 
@@ -958,317 +892,403 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
 
       <main className="flex-1 p-8 overflow-y-auto relative">
         
-        {/* MODAL: Switch Active Class */}
-        {showSwitchClassModal && (
-          <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-3xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95 duration-200">
-              <div className="p-6 border-b flex justify-between items-center bg-slate-50">
-                 <h3 className="text-2xl font-bold text-slate-800">Override Active Class</h3>
-                 <button onClick={() => setShowSwitchClassModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-6 h-6"/></button>
-              </div>
-              <div className="p-6 overflow-y-auto">
-                 <p className="text-slate-500 mb-6">Select a different class to monitor. This will temporarily replace your scheduled roster.</p>
-                 <button onClick={() => { setOverrideClassId(null); setShowSwitchClassModal(false); }} className="w-full p-4 mb-4 bg-slate-100 rounded-xl font-bold text-slate-700 hover:bg-slate-200 border-2 border-transparent transition-colors">
-                    Revert to Automatic Schedule
-                 </button>
-                 <div className="grid grid-cols-2 gap-4">
-                   {classes.map(c => (
-                      <button key={c.id} onClick={() => { setOverrideClassId(c.id); setShowSwitchClassModal(false); }} className="p-4 border-2 border-slate-100 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all font-bold text-slate-700 text-left">
-                         {c.name}
-                         <span className="block text-sm text-slate-500 font-normal mt-1">{c.roster?.length || 0} Students Assigned</span>
-                      </button>
-                   ))}
-                 </div>
-              </div>
+        {/* BELL SETTINGS TAB */}
+        {activeTab === 'bells' && (
+          <div className="animate-in fade-in duration-300">
+            <header className="mb-8">
+              <h2 className="text-3xl font-bold text-slate-800">Automated Bell Settings</h2>
+              <p className="text-slate-500 mt-1">Customize the sound that plays on this device when each of your classes begins and ends.</p>
+            </header>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {classes.filter(c => c.teacherId === teacher.id).map(c => (
+                <BellSettingsCard key={c.id} classItem={c} onSaveClass={onSaveClass} />
+              ))}
+              {classes.filter(c => c.teacherId === teacher.id).length === 0 && (
+                <p className="text-slate-500 italic p-6 bg-slate-50 rounded-2xl border border-slate-200 col-span-full">You do not have any classes assigned to you.</p>
+              )}
             </div>
           </div>
         )}
 
-        {/* MODAL: Pull In Students */}
-        {showPullStudentsModal && (
-          <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-3xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95 duration-200">
-              <div className="p-6 border-b flex justify-between items-center bg-slate-50">
-                 <h3 className="text-2xl font-bold text-slate-800">Pull Students to Your Room</h3>
-                 <button onClick={() => setShowPullStudentsModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-6 h-6"/></button>
+        {/* DASHBOARD TAB */}
+        {activeTab === 'dashboard' && (
+          <div className="animate-in fade-in duration-300">
+            {/* MODAL: Switch Active Class */}
+            {showSwitchClassModal && (
+              <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-3xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95 duration-200">
+                  <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+                     <h3 className="text-2xl font-bold text-slate-800">Override Active Class</h3>
+                     <button onClick={() => setShowSwitchClassModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-6 h-6"/></button>
+                  </div>
+                  <div className="p-6 overflow-y-auto">
+                     <p className="text-slate-500 mb-6">Select a different class to monitor. This will temporarily replace your scheduled roster.</p>
+                     <button onClick={() => { setOverrideClassId(null); setShowSwitchClassModal(false); }} className="w-full p-4 mb-4 bg-slate-100 rounded-xl font-bold text-slate-700 hover:bg-slate-200 border-2 border-transparent transition-colors text-left flex justify-between">
+                        Revert to Automatic Schedule
+                        <CheckCircle2 className="w-5 h-5 text-slate-400"/>
+                     </button>
+                     <div className="grid grid-cols-2 gap-4">
+                       {classes.map(c => (
+                          <button key={c.id} onClick={() => { setOverrideClassId(c.id); setShowSwitchClassModal(false); }} className="p-4 border-2 border-slate-100 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all font-bold text-slate-700 text-left flex flex-col justify-between h-full">
+                             <span>{c.name}</span>
+                             <span className="block text-sm text-slate-500 font-normal mt-2 bg-white px-2 py-1 rounded-md w-max border border-slate-100">{c.roster?.length || 0} Students Assigned</span>
+                          </button>
+                       ))}
+                     </div>
+                  </div>
+                </div>
               </div>
-              <div className="p-6 overflow-y-auto flex-1">
-                 <p className="text-slate-500 mb-4">Select a class to view its roster and add specific students to your dashboard for this period.</p>
-                 <select value={selectedPullClassId} onChange={e => setSelectedPullClassId(e.target.value)} className="w-full p-3 border border-slate-200 bg-slate-50 rounded-xl mb-6 focus:ring-2 focus:ring-purple-500 outline-none font-semibold text-slate-700">
-                    <option value="">-- Select a class to pull from --</option>
-                    {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                 </select>
+            )}
 
-                 {selectedPullClassId && (
-                    <div className="grid grid-cols-2 gap-3">
-                       {classes.find(c => c.id === selectedPullClassId)?.roster.map(s => {
-                          const isPulled = pulledStudents.some(ps => ps.id === s.id);
-                          return (
-                            <button key={s.id} onClick={() => {
-                               if(isPulled) {
-                                  setPulledStudents(pulledStudents.filter(ps => ps.id !== s.id));
-                               } else {
-                                  setPulledStudents([...pulledStudents, s]);
-                               }
-                            }} className={`p-3 rounded-xl border-2 font-bold text-left flex justify-between items-center transition-all ${isPulled ? 'border-purple-500 bg-purple-50 text-purple-700 shadow-sm' : 'border-slate-100 hover:border-purple-300 text-slate-700'}`}>
-                               {s.name}
-                               {isPulled ? <Check className="w-5 h-5"/> : <Plus className="w-4 h-4 text-slate-400"/>}
+            {/* MODAL: Pull In Students */}
+            {showPullStudentsModal && (
+              <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-3xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95 duration-200">
+                  <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+                     <h3 className="text-2xl font-bold text-slate-800">Pull Students to Your Room</h3>
+                     <button onClick={() => setShowPullStudentsModal(false)} className="text-slate-400 hover:text-slate-600"><X className="w-6 h-6"/></button>
+                  </div>
+                  <div className="p-6 overflow-y-auto flex-1">
+                     <p className="text-slate-500 mb-4">Select a class to view its roster and add specific students to your dashboard for this period.</p>
+                     <select value={selectedPullClassId} onChange={e => setSelectedPullClassId(e.target.value)} className="w-full p-3 border border-slate-200 bg-slate-50 rounded-xl mb-6 focus:ring-2 focus:ring-purple-500 outline-none font-semibold text-slate-700">
+                        <option value="">-- Select a class to pull from --</option>
+                        {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                     </select>
+
+                     {selectedPullClassId && (
+                        <div className="grid grid-cols-2 gap-3">
+                           {classes.find(c => c.id === selectedPullClassId)?.roster.map(s => {
+                              const isPulled = pulledStudents.some(ps => ps.id === s.id);
+                              return (
+                                <button key={s.id} onClick={() => {
+                                   if(isPulled) {
+                                      setPulledStudents(pulledStudents.filter(ps => ps.id !== s.id));
+                                   } else {
+                                      setPulledStudents([...pulledStudents, s]);
+                                   }
+                                }} className={`p-3 rounded-xl border-2 font-bold text-left flex justify-between items-center transition-all ${isPulled ? 'border-purple-500 bg-purple-50 text-purple-700 shadow-sm' : 'border-slate-100 hover:border-purple-300 text-slate-700'}`}>
+                                   {s.name}
+                                   {isPulled ? <Check className="w-5 h-5"/> : <Plus className="w-4 h-4 text-slate-400"/>}
+                                </button>
+                              )
+                           })}
+                        </div>
+                     )}
+                  </div>
+                  <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+                     <button onClick={() => setShowPullStudentsModal(false)} className="px-8 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl transition-colors shadow-sm">Done</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* MODAL: TEACHER INITIATED PASS */}
+            {showCreatePassModal && (
+              <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-3xl shadow-xl w-full max-w-4xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                  <div className="flex justify-between items-center p-6 border-b border-slate-100 bg-slate-50">
+                    <h3 className="font-bold text-2xl text-slate-800">
+                      {!selectedStudentForPass 
+                        ? 'Select Student to Leave Room' 
+                        : showRetroactiveStep 
+                          ? 'Log Missing Time' 
+                          : `Where is ${selectedStudentForPass.name} going?`}
+                    </h3>
+                    <button onClick={closePassModal} className="text-slate-400 hover:text-slate-600">
+                      <X className="w-6 h-6"/>
+                    </button>
+                  </div>
+                  <div className="p-6 max-h-[60vh] overflow-y-auto">
+                    {!selectedStudentForPass ? (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        {availableStudents.length === 0 && <p className="col-span-full text-center text-slate-500 py-4">No available students.</p>}
+                        {availableStudents.map(student => (
+                          <button
+                            key={student.id}
+                            onClick={() => setSelectedStudentForPass(student)}
+                            className="bg-white p-4 rounded-xl shadow-sm border-2 border-slate-100 hover:border-purple-500 hover:shadow-md transition-all font-semibold text-slate-700 text-center"
+                          >
+                            {student.name}
+                          </button>
+                        ))}
+                      </div>
+                    ) : showRetroactiveStep ? (
+                      <div className="animate-in fade-in slide-in-from-right-4 duration-200">
+                        <button onClick={() => setShowRetroactiveStep(false)} className="mb-6 text-sm font-bold text-slate-500 hover:text-purple-600 flex items-center gap-1">
+                          <ChevronLeft className="w-4 h-4" /> Back to Destinations
+                        </button>
+                        
+                        <p className="text-center text-xl font-bold text-slate-700 mb-6">How long was {selectedStudentForPass.name} gone?</p>
+                        
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                          {[1, 2, 5, 10, 15].map(mins => (
+                            <button
+                              key={mins}
+                              onClick={() => { onRetroactivePass(selectedStudentForPass, mins); closePassModal(); }}
+                              className="bg-white p-4 rounded-xl shadow-sm border-2 border-slate-100 hover:border-red-500 hover:bg-red-50 hover:text-red-700 transition-all font-black text-slate-700 text-center text-xl"
+                            >
+                              {mins} min
                             </button>
-                          )
-                       })}
-                    </div>
-                 )}
+                          ))}
+                        </div>
+                        
+                        <div className="flex items-center justify-center gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 w-full max-w-md mx-auto">
+                          <label className="font-bold text-slate-600 whitespace-nowrap">Custom Time:</label>
+                          <input 
+                            type="number" 
+                            value={customRetroTime} 
+                            onChange={(e) => setCustomRetroTime(e.target.value)} 
+                            placeholder="Minutes"
+                            className="w-full px-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 font-bold" 
+                          />
+                          <button 
+                            onClick={() => {
+                              const mins = parseInt(customRetroTime);
+                              if(mins > 0) { onRetroactivePass(selectedStudentForPass, mins); closePassModal(); }
+                            }}
+                            className="px-6 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="animate-in fade-in slide-in-from-right-4 duration-200">
+                        <button onClick={() => setSelectedStudentForPass(null)} className="mb-6 text-sm font-bold text-slate-500 hover:text-purple-600 flex items-center gap-1">
+                          <ChevronLeft className="w-4 h-4" /> Back to Students
+                        </button>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                          {DESTINATIONS.map(dest => (
+                            <button
+                              key={dest.id}
+                              onClick={() => { 
+                                onTeacherInitiatePass(selectedStudentForPass, dest); 
+                                closePassModal(); 
+                              }}
+                              className="bg-white p-6 rounded-2xl shadow-sm border-2 border-slate-100 hover:border-purple-500 transition-all flex flex-col items-center gap-3 relative overflow-hidden group"
+                            >
+                              {isHallwayBusy && dest.id !== 'office' && (
+                                <div className="absolute top-0 right-0 bg-orange-100 text-orange-700 text-[10px] px-2 py-1 rounded-bl-lg font-bold">
+                                  Override Auto-Applied
+                                </div>
+                              )}
+                              <span className="text-4xl group-hover:scale-110 transition-transform">{dest.icon}</span>
+                              <span className="font-bold text-slate-700">{dest.label}</span>
+                            </button>
+                          ))}
+                          
+                          <button
+                            onClick={() => setShowRetroactiveStep(true)}
+                            className="bg-white p-6 rounded-2xl shadow-sm border-2 border-slate-100 hover:border-red-500 hover:bg-red-50 transition-all flex flex-col items-center justify-center gap-3 relative overflow-hidden group"
+                          >
+                            <span className="text-4xl group-hover:scale-110 transition-transform">⚠️</span>
+                            <span className="font-bold text-slate-700 group-hover:text-red-700 text-center leading-tight">Left Without Permission</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
-                 <button onClick={() => setShowPullStudentsModal(false)} className="px-8 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl transition-colors shadow-sm">Done</button>
-              </div>
-            </div>
-          </div>
-        )}
+            )}
 
-        {/* MODAL: TEACHER INITIATED PASS */}
-        {showCreatePassModal && (
-          <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-3xl shadow-xl w-full max-w-4xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-              <div className="flex justify-between items-center p-6 border-b border-slate-100 bg-slate-50">
-                <h3 className="font-bold text-2xl text-slate-800">
-                  {!selectedStudentForPass 
-                    ? 'Select Student to Leave Room' 
-                    : showRetroactiveStep 
-                      ? 'Log Missing Time' 
-                      : `Where is ${selectedStudentForPass.name} going?`}
+            {pendingPasses.length > 0 && (
+              <div className="mb-8 bg-yellow-50 border-2 border-yellow-400 rounded-2xl p-6 shadow-md animate-in fade-in slide-in-from-top-4">
+                <h3 className="text-xl font-bold text-yellow-800 flex items-center gap-2 mb-4">
+                  <AlertTriangle className="w-6 h-6" /> Pending Pass Approvals ({pendingPasses.length})
                 </h3>
-                <button onClick={closePassModal} className="text-slate-400 hover:text-slate-600">
-                  <X className="w-6 h-6"/>
-                </button>
+                <div className="space-y-3">
+                  {pendingPasses.map(pass => (
+                    <div key={pass.id} className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-yellow-200">
+                      <div className="flex items-center gap-4">
+                        <span className="text-3xl">{pass.destination.icon}</span>
+                        <div>
+                          <p className="font-bold text-lg text-slate-800">{pass.student.name}</p>
+                          <p className="text-slate-500">Requested to go to the <span className="font-semibold">{pass.destination.label}</span></p>
+                        </div>
+                      </div>
+                      <div className="flex gap-3">
+                        <button onClick={() => onDeny(pass.id)} className="px-4 py-2 bg-slate-100 hover:bg-red-100 hover:text-red-700 text-slate-600 font-semibold rounded-lg flex items-center gap-2 transition-colors">
+                          <X className="w-5 h-5" /> Deny
+                        </button>
+                        <button onClick={() => onApprove(pass.id)} className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg flex items-center gap-2 shadow-sm transition-colors">
+                          <Check className="w-5 h-5" /> Approve
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="p-6 max-h-[60vh] overflow-y-auto">
-                {!selectedStudentForPass ? (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {availableStudents.length === 0 && <p className="col-span-full text-center text-slate-500 py-4">No available students.</p>}
-                    {availableStudents.map(student => (
-                      <button
-                        key={student.id}
-                        onClick={() => setSelectedStudentForPass(student)}
-                        className="bg-white p-4 rounded-xl shadow-sm border-2 border-slate-100 hover:border-purple-500 hover:shadow-md transition-all font-semibold text-slate-700 text-center"
-                      >
-                        {student.name}
-                      </button>
+            )}
+
+            <header className="mb-8 flex justify-between items-center">
+              <div>
+                <h1 className="text-3xl font-bold text-slate-800">Dashboard</h1>
+                <p className="text-slate-500 mt-1">Overview of your class and hallway activity.</p>
+              </div>
+              <button 
+                onClick={() => setShowCreatePassModal(true)} 
+                className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl shadow-sm flex items-center gap-2 transition-colors"
+              >
+                <Plus className="w-5 h-5" /> Start Pass
+              </button>
+            </header>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 space-y-8">
+                
+                <div className={`p-6 rounded-2xl border-2 flex justify-between items-center ${isFallback ? 'bg-slate-50 border-slate-200' : 'bg-purple-50 border-purple-200 shadow-sm'}`}>
+                  <div>
+                    <p className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-1">
+                      {overrideClassId ? 'Manual Override Active' : activeClass.startTime ? 'Scheduled Class' : 'Passing Period / Free Time'}
+                    </p>
+                    <h2 className="text-3xl font-black text-slate-800">{activeClass.name}</h2>
+                    {pulledStudents.length > 0 && (
+                       <p className="text-purple-600 font-bold mt-2 flex items-center gap-1"><Users className="w-4 h-4"/> + {pulledStudents.length} Guest Students Pulled In</p>
+                    )}
+                  </div>
+                  <div className="text-right hidden sm:block">
+                    <p className="text-xl font-bold text-slate-700">{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                    {activeClass.endTime && !overrideClassId && <p className="text-sm text-slate-500">Ends at {formatTimeStr(activeClass.endTime)}</p>}
+                    
+                    <div className="flex gap-2 mt-3 justify-end">
+                      <button onClick={() => setShowSwitchClassModal(true)} className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-50 shadow-sm transition-colors">Switch Class</button>
+                      <button onClick={() => setShowPullStudentsModal(true)} className="px-3 py-1.5 bg-purple-100 border border-purple-200 rounded-lg text-sm font-bold text-purple-700 hover:bg-purple-200 shadow-sm transition-colors">Pull Students</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <StatCard title="Present" value={combinedRoster.length - myActivePasses.length} subtitle="Students in room" color="blue" />
+                  <StatCard title="Out on Pass" value={myActivePasses.length} subtitle="From your class" color="emerald" />
+                  <StatCard title="Hall Traffic" value={globalPasses.length} subtitle="School-wide active" color="orange" />
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                  <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+                    <AlertTriangle className="text-orange-500 w-6 h-6" /> School-Wide Hallway Traffic
+                  </h3>
+                  
+                  {globalPasses.length === 0 && (
+                    <p className="text-slate-500 text-center py-4 bg-slate-50 rounded-xl border border-slate-100">Hallways are clear.</p>
+                  )}
+
+                  <div className="space-y-3">
+                    {myActivePasses.map(pass => (
+                      <TeacherDashboardPassRow key={pass.id} pass={pass} isMine={true} onEndPass={onEndPass} />
+                    ))}
+                    {otherActivePasses.map(pass => (
+                      <TeacherDashboardPassRow key={pass.id} pass={pass} isMine={false} />
                     ))}
                   </div>
-                ) : showRetroactiveStep ? (
-                  <div className="animate-in fade-in slide-in-from-right-4 duration-200">
-                    <button onClick={() => setShowRetroactiveStep(false)} className="mb-6 text-sm font-bold text-slate-500 hover:text-purple-600 flex items-center gap-1">
-                      <ChevronLeft className="w-4 h-4" /> Back to Destinations
-                    </button>
-                    
-                    <p className="text-center text-xl font-bold text-slate-700 mb-6">How long was {selectedStudentForPass.name} gone?</p>
-                    
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-                      {[1, 2, 5, 10, 15].map(mins => (
-                        <button
-                          key={mins}
-                          onClick={() => { onRetroactivePass(selectedStudentForPass, mins); closePassModal(); }}
-                          className="bg-white p-4 rounded-xl shadow-sm border-2 border-slate-100 hover:border-red-500 hover:bg-red-50 hover:text-red-700 transition-all font-black text-slate-700 text-center text-xl"
-                        >
-                          {mins} min
-                        </button>
-                      ))}
-                    </div>
-                    
-                    <div className="flex items-center justify-center gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 w-full max-w-md mx-auto">
-                      <label className="font-bold text-slate-600 whitespace-nowrap">Custom Time:</label>
-                      <input 
-                        type="number" 
-                        value={customRetroTime} 
-                        onChange={(e) => setCustomRetroTime(e.target.value)} 
-                        placeholder="Minutes"
-                        className="w-full px-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 font-bold" 
-                      />
-                      <button 
-                        onClick={() => {
-                          const mins = parseInt(customRetroTime);
-                          if(mins > 0) { onRetroactivePass(selectedStudentForPass, mins); closePassModal(); }
-                        }}
-                        className="px-6 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors shadow-sm"
-                      >
-                        Save
-                      </button>
-                    </div>
+                </div>
+              </div>
+
+              <div className="space-y-8">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                  <h3 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-purple-600" /> Today's Classes
+                  </h3>
+                  
+                  <div className="space-y-4 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-200 before:to-transparent">
+                    {myClassesToday.length === 0 && (
+                       <p className="text-center text-slate-500 italic mt-8">No classes scheduled for today.</p>
+                    )}
+                    {myClassesToday.map((c) => {
+                      const [sh, sm] = (c.startTime || '00:00').split(':').map(Number);
+                      const [eh, em] = (c.endTime || '23:59').split(':').map(Number);
+                      const startMins = sh * 60 + sm;
+                      const endMins = eh * 60 + em;
+
+                      const isPast = currentMins > endMins;
+                      const isActive = currentMins >= startMins && currentMins <= endMins;
+
+                      return (
+                        <TimelineItem 
+                          key={c.id} 
+                          time={`${formatTimeStr(c.startTime)} - ${formatTimeStr(c.endTime)}`} 
+                          label={c.name} 
+                          isActive={isActive} 
+                          isPast={isPast} 
+                        />
+                      );
+                    })}
                   </div>
-                ) : (
-                  <div className="animate-in fade-in slide-in-from-right-4 duration-200">
-                    <button onClick={() => setSelectedStudentForPass(null)} className="mb-6 text-sm font-bold text-slate-500 hover:text-purple-600 flex items-center gap-1">
-                      <ChevronLeft className="w-4 h-4" /> Back to Students
-                    </button>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                      {DESTINATIONS.map(dest => (
-                        <button
-                          key={dest.id}
-                          onClick={() => { 
-                            onTeacherInitiatePass(selectedStudentForPass, dest); 
-                            closePassModal(); 
-                          }}
-                          className="bg-white p-6 rounded-2xl shadow-sm border-2 border-slate-100 hover:border-purple-500 transition-all flex flex-col items-center gap-3 relative overflow-hidden group"
-                        >
-                          {isHallwayBusy && dest.id !== 'office' && (
-                            <div className="absolute top-0 right-0 bg-orange-100 text-orange-700 text-[10px] px-2 py-1 rounded-bl-lg font-bold">
-                              Override Auto-Applied
-                            </div>
-                          )}
-                          <span className="text-4xl group-hover:scale-110 transition-transform">{dest.icon}</span>
-                          <span className="font-bold text-slate-700">{dest.label}</span>
-                        </button>
-                      ))}
-                      
-                      <button
-                        onClick={() => setShowRetroactiveStep(true)}
-                        className="bg-white p-6 rounded-2xl shadow-sm border-2 border-slate-100 hover:border-red-500 hover:bg-red-50 transition-all flex flex-col items-center justify-center gap-3 relative overflow-hidden group"
-                      >
-                        <span className="text-4xl group-hover:scale-110 transition-transform">⚠️</span>
-                        <span className="font-bold text-slate-700 group-hover:text-red-700 text-center leading-tight">Left Without Permission</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
+                </div>
               </div>
             </div>
           </div>
         )}
+      </main>
+    </div>
+  );
+}
 
-        {pendingPasses.length > 0 && (
-          <div className="mb-8 bg-yellow-50 border-2 border-yellow-400 rounded-2xl p-6 shadow-md animate-in fade-in slide-in-from-top-4">
-            <h3 className="text-xl font-bold text-yellow-800 flex items-center gap-2 mb-4">
-              <AlertTriangle className="w-6 h-6" /> Pending Pass Approvals ({pendingPasses.length})
-            </h3>
-            <div className="space-y-3">
-              {pendingPasses.map(pass => (
-                <div key={pass.id} className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-yellow-200">
-                  <div className="flex items-center gap-4">
-                    <span className="text-3xl">{pass.destination.icon}</span>
-                    <div>
-                      <p className="font-bold text-lg text-slate-800">{pass.student.name}</p>
-                      <p className="text-slate-500">Requested to go to the <span className="font-semibold">{pass.destination.label}</span></p>
-                    </div>
-                  </div>
-                  <div className="flex gap-3">
-                    <button onClick={() => onDeny(pass.id)} className="px-4 py-2 bg-slate-100 hover:bg-red-100 hover:text-red-700 text-slate-600 font-semibold rounded-lg flex items-center gap-2 transition-colors">
-                      <X className="w-5 h-5" /> Deny
-                    </button>
-                    <button onClick={() => onApprove(pass.id)} className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg flex items-center gap-2 shadow-sm transition-colors">
-                      <Check className="w-5 h-5" /> Approve
-                    </button>
-                  </div>
-                </div>
-              ))}
+function BellSettingsCard({ classItem, onSaveClass }) {
+  const [startBell, setStartBell] = useState(classItem.startBell || 'none');
+  const [endBell, setEndBell] = useState(classItem.endBell || 'none');
+  const [isSaved, setIsSaved] = useState(false);
+  
+  const playTest = (key) => {
+     const url = BELL_SOUNDS[key]?.url;
+     if (url) new Audio(url).play().catch(e => alert("Please interact with the page before testing audio."));
+  };
+
+  const handleSave = () => {
+     onSaveClass({ ...classItem, startBell, endBell });
+     setIsSaved(true);
+     setTimeout(() => setIsSaved(false), 2000);
+  };
+
+  return (
+     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between h-full">
+        <div>
+          <h3 className="text-xl font-bold text-slate-800 mb-1">{classItem.name}</h3>
+          <p className="text-sm font-semibold text-purple-600 mb-6 uppercase tracking-wider">
+            {classItem.days} • {classItem.startTime || 'No Start Time'} - {classItem.endTime || 'No End Time'}
+          </p>
+          
+          <div className="space-y-5 mb-8">
+            <div>
+              <label className="block text-sm font-bold text-slate-600 mb-2">Class Start Bell</label>
+              <div className="flex gap-2">
+                <select value={startBell} onChange={e => setStartBell(e.target.value)} className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-purple-500 font-medium text-slate-700">
+                   {Object.entries(BELL_SOUNDS).map(([key, data]) => (
+                      <option key={key} value={key}>{data.label}</option>
+                   ))}
+                </select>
+                <button onClick={() => playTest(startBell)} className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors border border-slate-200" title="Test Sound">
+                  <Volume2 className="w-5 h-5"/>
+                </button>
+              </div>
             </div>
-          </div>
-        )}
-
-        <header className="mb-8 flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold text-slate-800">Dashboard</h1>
-            <p className="text-slate-500 mt-1">Overview of your class and hallway activity.</p>
-          </div>
-          <button 
-            onClick={() => setShowCreatePassModal(true)} 
-            className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl shadow-sm flex items-center gap-2 transition-colors"
-          >
-            <Plus className="w-5 h-5" /> Start Pass
-          </button>
-        </header>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-8">
             
-            <div className={`p-6 rounded-2xl border-2 flex justify-between items-center ${isFallback ? 'bg-slate-50 border-slate-200' : 'bg-purple-50 border-purple-200 shadow-sm'}`}>
-              <div>
-                <p className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-1">
-                  {overrideClassId ? 'Manual Override Active' : activePeriod ? activePeriod.name : (activeClass.startTime ? 'Scheduled Class' : 'Passing Period')}
-                </p>
-                <h2 className="text-3xl font-black text-slate-800">{activeClass.name}</h2>
-                {pulledStudents.length > 0 && (
-                   <p className="text-purple-600 font-bold mt-2 flex items-center gap-1"><Users className="w-4 h-4"/> + {pulledStudents.length} Guest Students Pulled In</p>
-                )}
-              </div>
-              <div className="text-right hidden sm:block">
-                <p className="text-xl font-bold text-slate-700">{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                {activePeriod && !overrideClassId && <p className="text-sm text-slate-500">Ends at {formatTimeStr(activePeriod.endTime)}</p>}
-                
-                <div className="flex gap-2 mt-3 justify-end">
-                  <button onClick={() => setShowSwitchClassModal(true)} className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-50 shadow-sm transition-colors">Switch Class</button>
-                  <button onClick={() => setShowPullStudentsModal(true)} className="px-3 py-1.5 bg-purple-100 border border-purple-200 rounded-lg text-sm font-bold text-purple-700 hover:bg-purple-200 shadow-sm transition-colors">Pull Students</button>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-4">
-              <StatCard title="Present" value={combinedRoster.length - myActivePasses.length} subtitle="Students in room" color="blue" />
-              <StatCard title="Out on Pass" value={myActivePasses.length} subtitle="From your class" color="emerald" />
-              <StatCard title="Hall Traffic" value={globalPasses.length} subtitle="School-wide active" color="orange" />
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
-                <AlertTriangle className="text-orange-500 w-6 h-6" /> School-Wide Hallway Traffic
-              </h3>
-              
-              {globalPasses.length === 0 && (
-                <p className="text-slate-500 text-center py-4 bg-slate-50 rounded-xl border border-slate-100">Hallways are clear.</p>
-              )}
-
-              <div className="space-y-3">
-                {myActivePasses.map(pass => (
-                  <TeacherDashboardPassRow key={pass.id} pass={pass} isMine={true} onEndPass={onEndPass} />
-                ))}
-                {otherActivePasses.map(pass => (
-                  <TeacherDashboardPassRow key={pass.id} pass={pass} isMine={false} />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-8">
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <h3 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <BellRing className="w-5 h-5 text-purple-600" /> Active Schedule
-              </h3>
-              <div className="bg-purple-50 text-purple-800 p-4 rounded-xl border border-purple-100 mb-6">
-                <p className="text-sm font-semibold uppercase tracking-wider mb-1">Subscribed To:</p>
-                <p className="text-xl font-bold">
-                  {todayScheduleData.activeSchedules.map(s => s.name).join(', ') || 'No Schedule Today'}
-                </p>
-              </div>
-              
-              <div className="space-y-4 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-200 before:to-transparent">
-                {todayScheduleData.allPeriods.length === 0 && (
-                   <p className="text-center text-slate-500 italic mt-8">No periods defined for today.</p>
-                )}
-                {todayScheduleData.allPeriods.map((period) => {
-                  const [sh, sm] = period.startTime.split(':').map(Number);
-                  const [eh, em] = period.endTime.split(':').map(Number);
-                  const startMins = sh * 60 + sm;
-                  const endMins = eh * 60 + em;
-
-                  const isPast = currentMins > endMins;
-                  const isActive = currentMins >= startMins && currentMins <= endMins;
-
-                  return (
-                    <TimelineItem 
-                      key={period.id} 
-                      time={`${formatTimeStr(period.startTime)} - ${formatTimeStr(period.endTime)}`} 
-                      label={period.name} 
-                      isActive={isActive} 
-                      isPast={isPast} 
-                    />
-                  );
-                })}
+            <div>
+              <label className="block text-sm font-bold text-slate-600 mb-2">Class End Bell</label>
+              <div className="flex gap-2">
+                <select value={endBell} onChange={e => setEndBell(e.target.value)} className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-purple-500 font-medium text-slate-700">
+                   {Object.entries(BELL_SOUNDS).map(([key, data]) => (
+                      <option key={key} value={key}>{data.label}</option>
+                   ))}
+                </select>
+                <button onClick={() => playTest(endBell)} className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors border border-slate-200" title="Test Sound">
+                  <Volume2 className="w-5 h-5"/>
+                </button>
               </div>
             </div>
           </div>
         </div>
-      </main>
-    </div>
+
+        <button 
+          onClick={handleSave} 
+          className={`w-full py-3 font-bold rounded-xl transition-all flex items-center justify-center gap-2 ${
+            isSaved ? 'bg-emerald-500 text-white' : 'bg-slate-900 text-white hover:bg-slate-800 shadow-sm'
+          }`}
+        >
+          {isSaved ? <><CheckCircle2 className="w-5 h-5" /> Saved!</> : 'Save Bell Settings'}
+        </button>
+     </div>
   );
 }
 
@@ -1331,7 +1351,7 @@ function TeacherDashboardPassRow({ pass, isMine, onEndPass }) {
   );
 }
 
-function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teachers, onSaveTeacher, onDeleteTeacher, students, onSaveStudent, onDeleteStudent, onBulkAddStudents, onMassDeleteStudents, onClearPassHistory, classes, onSaveClass, onDeleteClass, onBulkAddClasses, schedules, onSaveSchedule, onDeleteSchedule, calendarDays, onSaveCalendarDay }) {
+function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teachers, onSaveTeacher, onDeleteTeacher, students, onSaveStudent, onDeleteStudent, onBulkAddStudents, onMassDeleteStudents, onClearPassHistory, classes, onSaveClass, onDeleteClass, onBulkAddClasses }) {
   const [activeTab, setActiveTab] = useState('live');
 
   const [showTeacherModal, setShowTeacherModal] = useState(false);
@@ -1345,12 +1365,6 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
   const [showClassModal, setShowClassModal] = useState(false);
   const [editingClass, setEditingClass] = useState(null);
   const [showBulkAddClassesModal, setShowBulkAddClassesModal] = useState(false);
-
-  const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [editingSchedule, setEditingSchedule] = useState(null);
-
-  const [showCalendarModal, setShowCalendarModal] = useState(false);
-  const [editingCalendarDay, setEditingCalendarDay] = useState(null);
 
   const [showDangerZone, setShowDangerZone] = useState(false);
 
@@ -1369,20 +1383,9 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
     setShowClassModal(false);
   };
 
-  const handleSaveSchedule = (scheduleData) => {
-    onSaveSchedule(scheduleData);
-    setShowScheduleModal(false);
-  };
-
-  const handleSaveCalendarOverride = (calendarData) => {
-    onSaveCalendarDay(calendarData);
-    setShowCalendarModal(false);
-  };
-
   const handleDeleteTeacher = (id) => { onDeleteTeacher(id); setShowTeacherModal(false); };
   const handleDeleteStudent = (id) => { onDeleteStudent(id); setShowStudentModal(false); };
   const handleDeleteClass = (id) => { onDeleteClass(id); setShowClassModal(false); };
-  const handleDeleteSchedule = (id) => { onDeleteSchedule(id); setShowScheduleModal(false); };
 
   const gradeOrder = { '7th': 1, '8th': 2, 'Fr': 3, 'So': 4, 'Ju': 5, 'Sr': 6 };
   const sortedStudents = [...students].sort((a, b) => {
@@ -1406,7 +1409,6 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
           <AdminNavLink icon={<Users />} label="Staff Directory" isActive={activeTab === 'staff'} onClick={() => setActiveTab('staff')} />
           <AdminNavLink icon={<BookOpen />} label="Classes & Rosters" isActive={activeTab === 'classes'} onClick={() => setActiveTab('classes')} />
           <AdminNavLink icon={<GraduationCap />} label="Student Directory" isActive={activeTab === 'students'} onClick={() => setActiveTab('students')} />
-          <AdminNavLink icon={<CalendarDays />} label="Bell Schedules" isActive={activeTab === 'schedule'} onClick={() => setActiveTab('schedule')} />
           <AdminNavLink icon={<TrendingUp />} label="Analytics & Reports" isActive={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
         </nav>
 
@@ -1597,82 +1599,7 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
           </div>
         )}
 
-        {/* TAB 5: SCHEDULES & CALENDAR */}
-        {activeTab === 'schedule' && (
-          <div className="animate-in fade-in duration-300">
-            <header className="mb-8">
-              <h2 className="text-3xl font-bold text-slate-800">Bell Schedules</h2>
-              <p className="text-slate-500 mt-1">Manage bell templates and the school-wide calendar overrides.</p>
-            </header>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Master Calendar */}
-              <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[600px]">
-                <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2 shrink-0"><CalendarDays className="w-5 h-5 text-blue-500"/> The "When": Active Calendar</h3>
-                
-                <div className="space-y-2 overflow-y-auto pr-2 flex-1">
-                  {calendarDays.map((day) => {
-                    return (
-                      <div key={day.id} className={`flex items-center justify-between p-4 rounded-xl border ${day.isOverride ? 'bg-orange-50 border-orange-200' : 'bg-slate-50 border-slate-100'}`}>
-                        <div className="flex items-center gap-4 w-1/4 min-w-[120px]">
-                          <div className={`w-12 h-12 rounded-lg flex flex-col items-center justify-center shrink-0 ${day.isOverride ? 'bg-orange-100 text-orange-800' : 'bg-white text-slate-700 shadow-sm'}`}>
-                            <span className="text-xs uppercase font-bold">{day.date.split(' ')[0]}</span>
-                            <span className="text-lg font-black leading-none">{day.date.split(' ')[1]}</span>
-                          </div>
-                          <span className="font-bold text-slate-700 hidden sm:block">{day.day}</span>
-                        </div>
-                        
-                        <div className="flex-1 px-4">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {day.scheduleIds.length === 0 ? (
-                              <span className="text-slate-400 italic text-sm">No schedules assigned</span>
-                            ) : (
-                              day.scheduleIds.map(id => {
-                                const assignedSchedule = schedules.find(s => s.id === id);
-                                return (
-                                  <span key={id} className={`font-bold px-3 py-1 rounded-full text-sm ${day.isOverride ? 'bg-orange-200 text-orange-900' : 'bg-slate-200 text-slate-800'}`}>
-                                    {assignedSchedule ? assignedSchedule.name : 'Unknown Schedule'}
-                                  </span>
-                                );
-                              })
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex flex-col items-end shrink-0 gap-2">
-                          {day.isOverride && (
-                            <span className="text-orange-600 text-xs font-bold flex items-center gap-1 uppercase tracking-wider"><AlertTriangle className="w-3 h-3"/> Override Active</span>
-                          )}
-                          <button onClick={() => { setEditingCalendarDay(day); setShowCalendarModal(true); }} className="text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-3 py-1 rounded-lg text-sm font-bold transition-colors">
-                            {day.isOverride ? 'Edit Override' : 'Edit'}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Bell Templates / Schedules */}
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[600px]">
-                <div className="flex justify-between items-center mb-6 shrink-0">
-                  <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><BellRing className="w-5 h-5 text-purple-500"/> Bell Schedules</h3>
-                  <button onClick={() => { setEditingSchedule(null); setShowScheduleModal(true); }} className="text-sm font-bold text-purple-600 bg-purple-50 px-3 py-1 rounded-lg hover:bg-purple-100">+ New</button>
-                </div>
-                <div className="space-y-4 overflow-y-auto pr-2 flex-1">
-                  {schedules.map(sch => (
-                    <div key={sch.id} onClick={() => { setEditingSchedule(sch); setShowScheduleModal(true); }} className="p-4 bg-slate-50 rounded-xl border border-slate-100 hover:border-purple-200 transition-colors group cursor-pointer">
-                      <p className="font-bold text-slate-800 group-hover:text-purple-700 transition-colors">{sch.name}</p>
-                      <p className="text-sm text-slate-500 mt-1">{sch.periods?.length || 0} Periods defined</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 6: ANALYTICS & REPORTS */}
+        {/* TAB 5: ANALYTICS & REPORTS */}
         {activeTab === 'reports' && (
           <div className="animate-in fade-in duration-300 flex flex-col h-[calc(100vh-6rem)]">
             <header className="mb-6 shrink-0 flex justify-between items-end">
@@ -1797,25 +1724,6 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
             onClose={() => setShowClassModal(false)} 
             onSave={handleSaveClass}
             onDelete={handleDeleteClass}
-          />
-        )}
-
-        {showScheduleModal && (
-          <ScheduleModal
-            schedule={editingSchedule}
-            classes={classes}
-            onClose={() => setShowScheduleModal(false)}
-            onSave={handleSaveSchedule}
-            onDelete={handleDeleteSchedule}
-          />
-        )}
-
-        {showCalendarModal && (
-          <CalendarOverrideModal
-            dayItem={editingCalendarDay}
-            schedules={schedules}
-            onClose={() => setShowCalendarModal(false)}
-            onSave={handleSaveCalendarOverride}
           />
         )}
       </main>
@@ -2285,270 +2193,6 @@ function ClassModal({ classItem, teachers, students, onClose, onSave, onDelete }
               <button onClick={() => onSave(formData)} className="px-6 py-2 bg-purple-600 text-white font-bold rounded-lg hover:bg-purple-700 transition-colors shadow-sm">Save Roster</button>
             </div>
           )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ScheduleModal({ schedule, classes, onClose, onSave, onDelete }) {
-  const [formData, setFormData] = useState(schedule || { name: '', defaultDays: [], periods: [] });
-  const [confirmDelete, setConfirmDelete] = useState(false);
-
-  const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-
-  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
-
-  const handleToggleDay = (day) => {
-    const currentDays = formData.defaultDays || [];
-    if (currentDays.includes(day)) {
-      setFormData({ ...formData, defaultDays: currentDays.filter(d => d !== day) });
-    } else {
-      setFormData({ ...formData, defaultDays: [...currentDays, day] });
-    }
-  };
-
-  const handleAddPeriod = () => {
-    const newPeriod = {
-      id: 'p_' + Date.now(),
-      name: `Period ${formData.periods.length + 1}`,
-      startTime: '08:00',
-      endTime: '09:00',
-      classIds: []
-    };
-    setFormData({ ...formData, periods: [...formData.periods, newPeriod] });
-  };
-
-  const handleRemovePeriod = (periodId) => {
-    setFormData({ ...formData, periods: formData.periods.filter(p => p.id !== periodId) });
-  };
-
-  const handlePeriodChange = (periodId, field, value) => {
-    setFormData({
-      ...formData,
-      periods: formData.periods.map(p => p.id === periodId ? { ...p, [field]: value } : p)
-    });
-  };
-
-  const handleToggleClass = (periodId, classId) => {
-    setFormData({
-      ...formData,
-      periods: formData.periods.map(p => {
-        if (p.id === periodId) {
-          const isAssigned = p.classIds.includes(classId);
-          return {
-            ...p,
-            classIds: isAssigned ? p.classIds.filter(id => id !== classId) : [...p.classIds, classId]
-          };
-        }
-        return p;
-      })
-    });
-  };
-
-  return (
-    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-        
-        <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50 shrink-0">
-          <h3 className="font-bold text-lg text-slate-800">{schedule ? 'Edit Schedule & Periods' : 'Create New Schedule'}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
-        </div>
-        
-        <div className="p-6 overflow-y-auto flex-1 flex flex-col">
-          <div className="mb-6 shrink-0">
-            <label className="block text-sm font-bold text-slate-600 mb-1">Schedule Name</label>
-            <input name="name" value={formData.name} onChange={handleChange} placeholder="e.g. Standard Mon/Wed/Fri" className="w-full max-w-md px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" />
-          </div>
-
-          <div className="mb-6 shrink-0">
-            <label className="block text-sm font-bold text-slate-600 mb-2">Default Days Active</label>
-            <div className="flex flex-wrap gap-2">
-              {WEEKDAYS.map(day => {
-                const isActive = (formData.defaultDays || []).includes(day);
-                return (
-                  <button
-                    key={day}
-                    onClick={() => handleToggleDay(day)}
-                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-all border ${
-                      isActive 
-                        ? 'bg-purple-100 text-purple-700 border-purple-200 shadow-sm' 
-                        : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    {day}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="flex-1 flex flex-col border-t border-slate-100 pt-6">
-            <div className="flex justify-between items-center mb-4 shrink-0">
-              <h4 className="font-bold text-slate-700">Class Periods</h4>
-              <button onClick={handleAddPeriod} className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 flex items-center gap-1 transition-colors">
-                <PlusCircle className="w-4 h-4" /> Add Period
-              </button>
-            </div>
-            
-            <div className="space-y-6">
-              {formData.periods.length === 0 ? (
-                <div className="p-8 border-2 border-dashed border-slate-200 rounded-xl text-center">
-                  <p className="text-slate-500 font-medium">No periods added yet. Click "Add Period" to build your schedule.</p>
-                </div>
-              ) : (
-                formData.periods.map((period, index) => (
-                  <div key={period.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                    {/* Period Header / Time Inputs */}
-                    <div className="bg-slate-50 p-4 border-b border-slate-200 flex flex-wrap items-end gap-4">
-                      <div className="flex-1 min-w-[200px]">
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Period Label</label>
-                        <input value={period.name} onChange={(e) => handlePeriodChange(period.id, 'name', e.target.value)} placeholder="e.g. Period 1" className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-purple-500 text-sm font-bold text-slate-800" />
-                      </div>
-                      <div className="w-32">
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Start Time</label>
-                        <input type="time" value={period.startTime} onChange={(e) => handlePeriodChange(period.id, 'startTime', e.target.value)} className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-purple-500 text-sm" />
-                      </div>
-                      <div className="w-32">
-                        <label className="block text-xs font-bold text-slate-500 mb-1">End Time</label>
-                        <input type="time" value={period.endTime} onChange={(e) => handlePeriodChange(period.id, 'endTime', e.target.value)} className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-purple-500 text-sm" />
-                      </div>
-                      <button onClick={() => handleRemovePeriod(period.id)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors h-[34px] flex items-center justify-center" title="Delete Period">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                    
-                    {/* Assigned Classes Grid */}
-                    <div className="p-4">
-                      <p className="text-xs font-bold text-slate-500 mb-3 uppercase tracking-wider">Classes happening during this time:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {classes.length === 0 ? (
-                          <span className="text-sm text-slate-400 italic">No classes exist in the system yet.</span>
-                        ) : (
-                          classes.map(c => {
-                            const isAssigned = period.classIds.includes(c.id);
-                            return (
-                              <button
-                                key={c.id}
-                                onClick={() => handleToggleClass(period.id, c.id)}
-                                className={`text-sm px-3 py-1.5 rounded-lg border font-medium transition-all flex items-center gap-1.5 ${
-                                  isAssigned 
-                                    ? 'bg-purple-100 border-purple-200 text-purple-800 shadow-sm' 
-                                    : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
-                                }`}
-                              >
-                                {isAssigned && <Check className="w-3.5 h-3.5" />}
-                                {c.name}
-                              </button>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center gap-3 shrink-0">
-          <div className="flex-1">
-            {schedule && !confirmDelete && (
-              <button onClick={() => setConfirmDelete(true)} className="px-4 py-2 text-red-600 font-bold hover:bg-red-50 rounded-lg transition-colors">Delete Schedule</button>
-            )}
-            {schedule && confirmDelete && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-red-600 font-bold mr-2">Are you sure?</span>
-                <button onClick={() => onDelete(schedule.id)} className="px-4 py-2 bg-red-600 text-white font-bold hover:bg-red-700 rounded-lg transition-colors">Yes, Delete</button>
-                <button onClick={() => setConfirmDelete(false)} className="px-3 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
-              </div>
-            )}
-          </div>
-          {!confirmDelete && (
-            <div className="flex gap-2">
-              <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
-              <button onClick={() => onSave(formData)} className="px-6 py-2 bg-purple-600 text-white font-bold rounded-lg hover:bg-purple-700 transition-colors shadow-sm">Save Schedule</button>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CalendarOverrideModal({ dayItem, schedules, onClose, onSave }) {
-  const [selectedIds, setSelectedIds] = useState(dayItem?.scheduleIds || []);
-
-  if (!dayItem) return null;
-
-  const handleToggleSchedule = (scheduleId) => {
-    if (selectedIds.includes(scheduleId)) {
-      setSelectedIds(selectedIds.filter(id => id !== scheduleId));
-    } else {
-      setSelectedIds([...selectedIds, scheduleId]);
-    }
-  };
-
-  const handleSave = () => {
-    onSave({ ...dayItem, scheduleIds: selectedIds, isOverride: true });
-  };
-
-  const handleReset = () => {
-    onSave({ ...dayItem, scheduleIds: [], isOverride: false });
-  };
-
-  return (
-    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
-          <h3 className="font-bold text-lg text-slate-800">Edit Schedule for {dayItem.date}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
-        </div>
-        
-        <div className="p-6">
-          <p className="text-slate-500 mb-6">Select which schedules should be actively running on <span className="font-bold text-slate-700">{dayItem.day}, {dayItem.date}</span>. You can select multiple.</p>
-          
-          <div className="space-y-3 max-h-[40vh] overflow-y-auto pr-2">
-            {schedules.length === 0 ? (
-              <p className="text-slate-400 italic text-center py-4">No schedules have been created yet.</p>
-            ) : (
-              schedules.map(sch => {
-                const isActive = selectedIds.includes(sch.id);
-                return (
-                  <button
-                    key={sch.id}
-                    onClick={() => handleToggleSchedule(sch.id)}
-                    className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left ${
-                      isActive 
-                        ? 'border-blue-500 bg-blue-50' 
-                        : 'border-slate-100 bg-white hover:border-slate-200'
-                    }`}
-                  >
-                    <div>
-                      <p className={`font-bold ${isActive ? 'text-blue-800' : 'text-slate-700'}`}>{sch.name}</p>
-                      <p className={`text-sm ${isActive ? 'text-blue-600/70' : 'text-slate-500'}`}>{sch.periods.length} Periods Defined</p>
-                    </div>
-                    <div className={`w-6 h-6 rounded-md flex items-center justify-center border-2 ${
-                      isActive ? 'bg-blue-500 border-blue-500 text-white' : 'border-slate-300'
-                    }`}>
-                      {isActive && <Check className="w-4 h-4" />}
-                    </div>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center gap-3">
-          <button onClick={handleReset} className="px-4 py-2 text-slate-500 font-bold hover:bg-slate-200 rounded-lg transition-colors text-sm">
-            Clear Override (Restore Default)
-          </button>
-          <div className="flex gap-2">
-            <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
-            <button onClick={handleSave} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors shadow-sm">Save Overrides</button>
-          </div>
         </div>
       </div>
     </div>

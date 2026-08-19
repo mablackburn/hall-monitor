@@ -1628,8 +1628,9 @@ function BulkAddModal({ onClose, onSave }) {
   const handleProcessCSV = () => {
     const lines = csvText.split('\n');
     const newStudents = lines.map(line => {
-       const [name, idNum, grade] = line.split(',').map(s => s?.trim());
-       if(name) return { name, idNum: idNum || '', grade: grade || 'Fr' };
+       // Now only expects Name and Grade
+       const [name, grade] = line.split(',').map(s => s?.trim());
+       if(name) return { name, grade: grade || 'Fr' };
        return null;
     }).filter(Boolean);
     
@@ -1648,13 +1649,13 @@ function BulkAddModal({ onClose, onSave }) {
         </div>
         <div className="p-6">
           <p className="text-slate-600 mb-4 text-sm">
-            Paste your student data below. Format each line as: <strong>Name, ID Number, Grade</strong>
+            Paste your student data below. Format each line as: <strong>Name, Grade</strong>
             <br/><span className="text-xs text-slate-400">(Grades must match exactly: 7th, 8th, Fr, So, Ju, Sr)</span>
           </p>
           <textarea 
             value={csvText}
             onChange={(e) => setCsvText(e.target.value)}
-            placeholder="John Doe, 12345, Fr&#10;Jane Smith, 67890, So"
+            placeholder="John Doe, Fr&#10;Jane Smith, So"
             className="w-full h-64 p-4 font-mono text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
           />
         </div>
@@ -1771,7 +1772,8 @@ function TeacherModal({ teacher, onClose, onSave, onDelete }) {
 }
 
 function StudentModal({ student, defaultGrade, onClose, onSave, onDelete }) {
-  const [formData, setFormData] = useState(student || { name: '', idNum: '', grade: defaultGrade || 'Fr' });
+  // Removed idNum from initial state
+  const [formData, setFormData] = useState(student || { name: '', grade: defaultGrade || 'Fr' });
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -1788,22 +1790,16 @@ function StudentModal({ student, defaultGrade, onClose, onSave, onDelete }) {
             <label className="block text-sm font-bold text-slate-600 mb-1">Full Name</label>
             <input name="name" value={formData.name} onChange={handleChange} placeholder="e.g. John Doe" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-bold text-slate-600 mb-1">Student ID</label>
-              <input name="idNum" value={formData.idNum} onChange={handleChange} placeholder="e.g. 90210" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" />
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-slate-600 mb-1">Grade Level</label>
-              <select name="grade" value={formData.grade} onChange={handleChange} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500">
-                <option value="7th">7th Grade</option>
-                <option value="8th">8th Grade</option>
-                <option value="Fr">Freshman (Fr)</option>
-                <option value="So">Sophomore (So)</option>
-                <option value="Ju">Junior (Ju)</option>
-                <option value="Sr">Senior (Sr)</option>
-              </select>
-            </div>
+          <div>
+            <label className="block text-sm font-bold text-slate-600 mb-1">Grade Level</label>
+            <select name="grade" value={formData.grade} onChange={handleChange} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500">
+              <option value="7th">7th Grade</option>
+              <option value="8th">8th Grade</option>
+              <option value="Fr">Freshman (Fr)</option>
+              <option value="So">Sophomore (So)</option>
+              <option value="Ju">Junior (Ju)</option>
+              <option value="Sr">Senior (Sr)</option>
+            </select>
           </div>
         </div>
         <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center gap-3">

@@ -221,6 +221,28 @@ export default function App() {
     return { pass: { id: newPassId, ...newPass, startTime: new Date(newPass.startTime) }, status: 'active' };
   };
 
+  const handleRetroactivePass = async (student, durationMinutes, requestingTeacher) => {
+    if (!user) return { pass: null, status: 'error' };
+    
+    const newPassId = 'pass_' + Date.now();
+    const endTime = new Date();
+    // Calculate the start time by subtracting the minutes from right now
+    const startTime = new Date(endTime.getTime() - durationMinutes * 60000);
+    
+    const newPass = {
+      student: student,
+      teacher: requestingTeacher,
+      destination: { id: 'awol', label: 'Left Without Permission', icon: '⚠️' },
+      requestTime: startTime.toISOString(),
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
+      status: 'completed' // Instantly marks it as finished
+    };
+
+    await setDoc(getDocumentRef('passes', newPassId), newPass);
+    return { status: 'completed' };
+  };
+
   const handleEndPass = async (passId) => {
     if (!user) return;
     const passRef = getDocumentRef('passes', passId);
@@ -384,6 +406,7 @@ service cloud.firestore {
           onDeny={handleDenyPass}
           onEndPass={handleEndPass} 
           onTeacherInitiatePass={(s, d) => handleTeacherInitiatePass(s, d, currentTeacher)}
+          onRetroactivePass={(s, mins) => handleRetroactivePass(s, mins, currentTeacher)}
           isHallwayBusy={isHallwayBusy}
           classes={classes}
           todayScheduleData={todayScheduleData}
@@ -788,17 +811,28 @@ function MiniPassBanner({ pass, onClick }) {
   );
 }
 
-function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApprove, onDeny, onEndPass, onTeacherInitiatePass, isHallwayBusy, classes, todayScheduleData }) {
+function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApprove, onDeny, onEndPass, onTeacherInitiatePass, onRetroactivePass, isHallwayBusy, classes, todayScheduleData }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [currentTime, setCurrentTime] = useState(new Date());
 
   const [showCreatePassModal, setShowCreatePassModal] = useState(false);
   const [selectedStudentForPass, setSelectedStudentForPass] = useState(null);
+  
+  // New states for the retroactive time menu
+  const [showRetroactiveStep, setShowRetroactiveStep] = useState(false);
+  const [customRetroTime, setCustomRetroTime] = useState('');
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const closePassModal = () => {
+    setShowCreatePassModal(false);
+    setSelectedStudentForPass(null);
+    setShowRetroactiveStep(false);
+    setCustomRetroTime('');
+  };
   
   const myActivePasses = globalPasses.filter(p => p.teacher.id === teacher.id);
   const otherActivePasses = globalPasses.filter(p => p.teacher.id !== teacher.id);
@@ -862,9 +896,13 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
             <div className="bg-white rounded-3xl shadow-xl w-full max-w-4xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
               <div className="flex justify-between items-center p-6 border-b border-slate-100 bg-slate-50">
                 <h3 className="font-bold text-2xl text-slate-800">
-                  {selectedStudentForPass ? `Where is ${selectedStudentForPass.name} going?` : 'Select Student to Leave Room'}
+                  {!selectedStudentForPass 
+                    ? 'Select Student to Leave Room' 
+                    : showRetroactiveStep 
+                      ? 'Log Missing Time' 
+                      : `Where is ${selectedStudentForPass.name} going?`}
                 </h3>
-                <button onClick={() => { setShowCreatePassModal(false); setSelectedStudentForPass(null); }} className="text-slate-400 hover:text-slate-600">
+                <button onClick={closePassModal} className="text-slate-400 hover:text-slate-600">
                   <X className="w-6 h-6"/>
                 </button>
               </div>
@@ -882,8 +920,48 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
                       </button>
                     ))}
                   </div>
+                ) : showRetroactiveStep ? (
+                  <div className="animate-in fade-in slide-in-from-right-4 duration-200">
+                    <button onClick={() => setShowRetroactiveStep(false)} className="mb-6 text-sm font-bold text-slate-500 hover:text-purple-600 flex items-center gap-1">
+                      <ChevronLeft className="w-4 h-4" /> Back to Destinations
+                    </button>
+                    
+                    <p className="text-center text-xl font-bold text-slate-700 mb-6">How long was {selectedStudentForPass.name} gone?</p>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                      {[1, 2, 5, 10, 15].map(mins => (
+                        <button
+                          key={mins}
+                          onClick={() => { onRetroactivePass(selectedStudentForPass, mins); closePassModal(); }}
+                          className="bg-white p-4 rounded-xl shadow-sm border-2 border-slate-100 hover:border-red-500 hover:bg-red-50 hover:text-red-700 transition-all font-black text-slate-700 text-center text-xl"
+                        >
+                          {mins} min
+                        </button>
+                      ))}
+                    </div>
+                    
+                    <div className="flex items-center justify-center gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 w-full max-w-md mx-auto">
+                      <label className="font-bold text-slate-600 whitespace-nowrap">Custom Time:</label>
+                      <input 
+                        type="number" 
+                        value={customRetroTime} 
+                        onChange={(e) => setCustomRetroTime(e.target.value)} 
+                        placeholder="Minutes"
+                        className="w-full px-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 font-bold" 
+                      />
+                      <button 
+                        onClick={() => {
+                          const mins = parseInt(customRetroTime);
+                          if(mins > 0) { onRetroactivePass(selectedStudentForPass, mins); closePassModal(); }
+                        }}
+                        className="px-6 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
                 ) : (
-                  <div>
+                  <div className="animate-in fade-in slide-in-from-right-4 duration-200">
                     <button onClick={() => setSelectedStudentForPass(null)} className="mb-6 text-sm font-bold text-slate-500 hover:text-purple-600 flex items-center gap-1">
                       <ChevronLeft className="w-4 h-4" /> Back to Students
                     </button>
@@ -893,24 +971,61 @@ function TeacherView({ onSwitchRole, teacher, globalPasses, pendingPasses, onApp
                           key={dest.id}
                           onClick={() => { 
                             onTeacherInitiatePass(selectedStudentForPass, dest); 
-                            setShowCreatePassModal(false); 
-                            setSelectedStudentForPass(null); 
+                            closePassModal(); 
                           }}
-                          className="bg-white p-6 rounded-2xl shadow-sm border-2 border-slate-100 hover:border-purple-500 transition-all flex flex-col items-center gap-3 relative overflow-hidden"
+                          className="bg-white p-6 rounded-2xl shadow-sm border-2 border-slate-100 hover:border-purple-500 transition-all flex flex-col items-center gap-3 relative overflow-hidden group"
                         >
                           {isHallwayBusy && dest.id !== 'office' && (
                             <div className="absolute top-0 right-0 bg-orange-100 text-orange-700 text-[10px] px-2 py-1 rounded-bl-lg font-bold">
                               Override Auto-Applied
                             </div>
                           )}
-                          <span className="text-4xl">{dest.icon}</span>
+                          <span className="text-4xl group-hover:scale-110 transition-transform">{dest.icon}</span>
                           <span className="font-bold text-slate-700">{dest.label}</span>
                         </button>
                       ))}
+                      
+                      {/* NEW RETROACTIVE BUTTON */}
+                      <button
+                        onClick={() => setShowRetroactiveStep(true)}
+                        className="bg-white p-6 rounded-2xl shadow-sm border-2 border-slate-100 hover:border-red-500 hover:bg-red-50 transition-all flex flex-col items-center justify-center gap-3 relative overflow-hidden group"
+                      >
+                        <span className="text-4xl group-hover:scale-110 transition-transform">⚠️</span>
+                        <span className="font-bold text-slate-700 group-hover:text-red-700 text-center leading-tight">Left Without Permission</span>
+                      </button>
                     </div>
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {pendingPasses.length > 0 && (
+          <div className="mb-8 bg-yellow-50 border-2 border-yellow-400 rounded-2xl p-6 shadow-md animate-in fade-in slide-in-from-top-4">
+            <h3 className="text-xl font-bold text-yellow-800 flex items-center gap-2 mb-4">
+              <AlertTriangle className="w-6 h-6" /> Pending Pass Approvals ({pendingPasses.length})
+            </h3>
+            <div className="space-y-3">
+              {pendingPasses.map(pass => (
+                <div key={pass.id} className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-yellow-200">
+                  <div className="flex items-center gap-4">
+                    <span className="text-3xl">{pass.destination.icon}</span>
+                    <div>
+                      <p className="font-bold text-lg text-slate-800">{pass.student.name}</p>
+                      <p className="text-slate-500">Requested to go to the <span className="font-semibold">{pass.destination.label}</span></p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <button onClick={() => onDeny(pass.id)} className="px-4 py-2 bg-slate-100 hover:bg-red-100 hover:text-red-700 text-slate-600 font-semibold rounded-lg flex items-center gap-2 transition-colors">
+                      <X className="w-5 h-5" /> Deny
+                    </button>
+                    <button onClick={() => onApprove(pass.id)} className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg flex items-center gap-2 shadow-sm transition-colors">
+                      <Check className="w-5 h-5" /> Approve
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}

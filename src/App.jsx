@@ -341,7 +341,7 @@ service cloud.firestore {
           todayPeriods={todayScheduleData.allPeriods}
         />
       )}
-      {currentRole === 'teacher' && (
+     {currentRole === 'teacher' && (
         <TeacherView 
           onSwitchRole={() => { setCurrentRole(null); setCurrentTeacher(null); }} 
           teacher={currentTeacher}
@@ -350,6 +350,8 @@ service cloud.firestore {
           onApprove={handleApprovePass}
           onDeny={handleDenyPass}
           onEndPass={handleEndPass} 
+          onTeacherInitiatePass={(s, d) => handleTeacherInitiatePass(s, d, currentTeacher)}
+          isHallwayBusy={isHallwayBusy}
           classes={classes}
           todayScheduleData={todayScheduleData}
         />

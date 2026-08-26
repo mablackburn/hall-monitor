@@ -27,12 +27,12 @@ const getDocumentRef = (colName, docId) => doc(db, colName, docId);
 // --- HELPER FOR GRADE BADGES ---
 const getGradeBadgeClass = (grade) => {
   const colors = {
-    '7th': 'bg-teal-100 text-teal-700',
-    '8th': 'bg-cyan-100 text-cyan-700',
-    'Fr': 'bg-green-100 text-green-700',
-    'So': 'bg-blue-100 text-blue-700',
-    'Ju': 'bg-purple-100 text-purple-700',
-    'Sr': 'bg-orange-100 text-orange-700',
+    '7': 'bg-teal-100 text-teal-700',
+    '8': 'bg-cyan-100 text-cyan-700',
+    '9': 'bg-green-100 text-green-700',
+    '10': 'bg-blue-100 text-blue-700',
+    '11': 'bg-purple-100 text-purple-700',
+    '12': 'bg-orange-100 text-orange-700',
   };
   return colors[grade] || 'bg-slate-100 text-slate-700';
 };
@@ -1367,7 +1367,7 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
   
   const [showStudentModal, setShowStudentModal] = useState(false);
   const [editingStudent, setEditingStudent] = useState(null);
-  const [studentModalDefaultGrade, setStudentModalDefaultGrade] = useState('Fr');
+  const [studentModalDefaultGrade, setStudentModalDefaultGrade] = useState('9');
   const [showBulkAddModal, setShowBulkAddModal] = useState(false);
   
   const [showClassModal, setShowClassModal] = useState(false);
@@ -1395,7 +1395,7 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
   const handleDeleteStudent = (id) => { onDeleteStudent(id); setShowStudentModal(false); };
   const handleDeleteClass = (id) => { onDeleteClass(id); setShowClassModal(false); };
 
-  const gradeOrder = { '7th': 1, '8th': 2, 'Fr': 3, 'So': 4, 'Ju': 5, 'Sr': 6 };
+  const gradeOrder = { '7': 1, '8': 2, '9': 3, '10': 4, '11': 5, '12': 6 };
   const sortedStudents = [...students].sort((a, b) => {
     const gradeDiff = (gradeOrder[a.grade] || 99) - (gradeOrder[b.grade] || 99);
     if (gradeDiff !== 0) return gradeDiff;
@@ -1632,12 +1632,12 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
 
             <div className="flex-1 overflow-y-auto pr-4 space-y-6 pb-12">
               {[
-                { key: '7th', label: '7th Grade' },
-                { key: '8th', label: '8th Grade' },
-                { key: 'Fr', label: 'Freshmen' },
-                { key: 'So', label: 'Sophomores' },
-                { key: 'Ju', label: 'Juniors' },
-                { key: 'Sr', label: 'Seniors' }
+                { key: '7', label: '7th Grade' },
+                { key: '8', label: '8th Grade' },
+                { key: '9', label: '9th Grade' },
+                { key: '10', label: '10th Grade' },
+                { key: '11', label: '11th Grade' },
+                { key: '12', label: '12th Grade' }
               ].map(gradeGroup => {
                 const gradeStudents = sortedStudents.filter(s => s.grade === gradeGroup.key);
                 return (
@@ -1806,6 +1806,474 @@ function AdminView({ onSwitchRole, globalPasses, passHistory, onEndPass, teacher
           />
         )}
       </main>
+    </div>
+  );
+}
+
+// Custom Nav Link for Admin Sidebar to keep colors distinct from Teacher view
+function AdminNavLink({ icon, label, isActive, onClick }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+        isActive 
+          ? 'bg-emerald-500 text-white font-bold shadow-md' 
+          : 'text-emerald-400/70 hover:bg-emerald-900/50 hover:text-emerald-200'
+      }`}
+    >
+      {React.cloneElement(icon, { className: 'w-5 h-5' })}
+      {label}
+    </button>
+  );
+}
+
+function TeacherNavLink({ icon, label, isActive, onClick }) {
+  return (
+    <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${isActive ? 'bg-purple-600 text-white font-semibold' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
+      {React.cloneElement(icon, { className: 'w-5 h-5' })} {label}
+    </button>
+  );
+}
+
+function StatCard({ title, value, subtitle, color }) {
+  const colorMap = { blue: 'bg-blue-50 text-blue-700 border-blue-100', emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100', orange: 'bg-orange-50 text-orange-700 border-orange-100', purple: 'bg-purple-50 text-purple-700 border-purple-100' };
+  return (
+    <div className={`p-5 rounded-2xl border ${colorMap[color]}`}>
+      <h4 className="text-sm font-semibold opacity-80 mb-1">{title}</h4>
+      <p className="text-4xl font-black mb-1">{value}</p>
+      <p className="text-xs opacity-70 font-medium">{subtitle}</p>
+    </div>
+  );
+}
+
+function TimelineItem({ time, label, isActive, isPast }) {
+  return (
+    <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+      <div className={`flex items-center justify-center w-3 h-3 rounded-full border-2 border-white shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 z-10 ${isActive ? 'bg-purple-600 w-4 h-4' : isPast ? 'bg-slate-400' : 'bg-slate-200'}`}></div>
+      <div className={`w-[calc(100%-2rem)] md:w-[calc(50%-1.5rem)] p-3 rounded-lg border ${isActive ? 'bg-purple-600 text-white border-purple-600 shadow-md transform scale-105 transition-transform' : isPast ? 'bg-slate-50 text-slate-400 border-slate-100' : 'bg-white text-slate-600 border-slate-200'}`}>
+        <div className="flex justify-between items-center">
+          <span className="font-bold">{label}</span>
+          <span className={`text-sm ${isActive ? 'text-purple-200' : 'text-slate-400'}`}>{time}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- ADMIN MODAL COMPONENTS ---
+
+function BulkAddModal({ onClose, onSave }) {
+  const [csvText, setCsvText] = useState('');
+
+  const handleProcessCSV = () => {
+    const lines = csvText.split('\n');
+    const newStudents = lines.map(line => {
+       const [name, grade] = line.split(',').map(s => s?.trim());
+       if(name) return { name, grade: grade || '9' };
+       return null;
+    }).filter(Boolean);
+    
+    if(newStudents.length > 0) {
+       onSave(newStudents);
+    }
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+          <h3 className="font-bold text-lg text-slate-800">Bulk Import Students</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="p-6">
+          <p className="text-slate-600 mb-4 text-sm">
+            Paste your student data below. Format each line as: <strong>Name, Grade</strong>
+            <br/><span className="text-xs text-slate-400">(Grades must be: 7, 8, 9, 10, 11, 12)</span>
+          </p>
+          <textarea 
+            value={csvText}
+            onChange={(e) => setCsvText(e.target.value)}
+            placeholder="John Doe, 9&#10;Jane Smith, 10"
+            className="w-full h-64 p-4 font-mono text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+          <button onClick={handleProcessCSV} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 transition-colors shadow-sm">Import Students</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BulkAddClassesModal({ teachers, onClose, onSave }) {
+  const [csvText, setCsvText] = useState('');
+
+  const handleProcessCSV = () => {
+    const lines = csvText.split('\n');
+    const newClasses = lines.map(line => {
+       const parts = line.split(',').map(s => s?.trim());
+       const name = parts[0];
+       const teacherName = parts[1];
+       const startTime = parts[2] || '';
+       const endTime = parts[3] || '';
+       const days = parts[4] || '';
+       
+       if(name) {
+          const matchedTeacher = teachers.find(t => t.name.toLowerCase() === teacherName?.toLowerCase());
+          return {
+             name,
+             teacherId: matchedTeacher ? matchedTeacher.id : '',
+             startTime,
+             endTime,
+             days,
+             roster: []
+          };
+       }
+       return null;
+    }).filter(Boolean);
+    
+    if(newClasses.length > 0) onSave(newClasses);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+          <h3 className="font-bold text-lg text-slate-800">Bulk Import Classes</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="p-6">
+          <p className="text-slate-600 mb-4 text-sm">
+            Paste your class data below. Format each line exactly as:<br/>
+            <strong>Class Name, Teacher Name, Start Time (24h), End Time (24h), Days</strong>
+            <br/><span className="text-xs text-slate-400">Example: 7th Grade Math, Cody Blake, 14:30, 15:30, MTuWThF</span>
+          </p>
+          <textarea 
+            value={csvText}
+            onChange={(e) => setCsvText(e.target.value)}
+            placeholder="7th Grade Math, Cody Blake, 14:30, 15:30, MTuWThF&#10;Science 101, Sarah Smith, 08:00, 09:00, MWF"
+            className="w-full h-64 p-4 font-mono text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+          />
+        </div>
+        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+          <button onClick={handleProcessCSV} className="px-6 py-2 bg-purple-600 text-white font-bold rounded-lg hover:bg-purple-700 transition-colors shadow-sm">Import Classes</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DangerZoneModal({ onClose, onMassDelete, onClearHistory }) {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState(false);
+
+  const handleAction = (actionType) => {
+     if(pin === '8631') {
+        if(actionType === 'deleteStudents') onMassDelete();
+        if(actionType === 'clearHistory') onClearHistory();
+        onClose();
+     } else {
+        setError(true);
+        setPin('');
+     }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200 border-4 border-red-500">
+        <div className="flex justify-between items-center p-4 border-b border-red-100 bg-red-50">
+          <h3 className="font-bold text-lg text-red-800 flex items-center gap-2"><AlertTriangle className="w-5 h-5"/> Danger Zone</h3>
+          <button onClick={onClose} className="text-red-400 hover:text-red-600"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="p-6">
+          <p className="text-slate-600 mb-6 text-sm text-center">
+            These actions are permanent. To proceed, please enter the Admin PIN (8631).
+          </p>
+          <div className="flex justify-center mb-6">
+             <input 
+               type="password" 
+               value={pin} 
+               onChange={(e) => { setPin(e.target.value); setError(false); }}
+               placeholder="Enter Admin PIN" 
+               className={`text-center px-4 py-2 bg-slate-50 border ${error ? 'border-red-500 bg-red-50' : 'border-slate-300'} rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 font-mono tracking-widest`}
+             />
+          </div>
+          <div className="space-y-3">
+             <button onClick={() => handleAction('clearHistory')} className="w-full py-3 bg-orange-100 text-orange-700 font-bold rounded-lg hover:bg-orange-200 transition-colors border border-orange-200">
+               Clear All Pass History
+             </button>
+             <button onClick={() => handleAction('deleteStudents')} className="w-full py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors shadow-sm">
+               Delete ALL Students & Rosters
+             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TeacherModal({ teacher, onClose, onSave, onDelete }) {
+  const [formData, setFormData] = useState(teacher || { name: '', room: '', pin: '' });
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+          <h3 className="font-bold text-lg text-slate-800">{teacher ? 'Edit Teacher' : 'Add New Teacher'}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-bold text-slate-600 mb-1">Name</label>
+            <input name="name" value={formData.name} onChange={handleChange} placeholder="e.g. Mr. Davis" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-bold text-slate-600 mb-1">Room #</label>
+              <input name="room" value={formData.room} onChange={handleChange} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-slate-600 mb-1">Login PIN</label>
+              <input name="pin" value={formData.pin} onChange={handleChange} placeholder="e.g. 1" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+        </div>
+        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center gap-3">
+          <div className="flex-1">
+            {teacher && !confirmDelete && (
+              <button onClick={() => setConfirmDelete(true)} className="px-4 py-2 text-red-600 font-bold hover:bg-red-50 rounded-lg transition-colors">Delete</button>
+            )}
+            {teacher && confirmDelete && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-red-600 font-bold mr-2">Are you sure?</span>
+                <button onClick={() => onDelete(teacher.id)} className="px-4 py-2 bg-red-600 text-white font-bold hover:bg-red-700 rounded-lg transition-colors">Yes, Delete</button>
+                <button onClick={() => setConfirmDelete(false)} className="px-3 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+              </div>
+            )}
+          </div>
+          {!confirmDelete && (
+            <div className="flex gap-2">
+              <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+              <button onClick={() => onSave(formData)} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors shadow-sm">Save</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StudentModal({ student, defaultGrade, onClose, onSave, onDelete }) {
+  const [formData, setFormData] = useState(student || { name: '', grade: defaultGrade || '9' });
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+          <h3 className="font-bold text-lg text-slate-800">{student ? 'Edit Student' : 'Add New Student'}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-bold text-slate-600 mb-1">Full Name</label>
+            <input name="name" value={formData.name} onChange={handleChange} placeholder="e.g. John Doe" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-bold text-slate-600 mb-1">Grade Level</label>
+            <select name="grade" value={formData.grade} onChange={handleChange} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500">
+              <option value="7">7th Grade</option>
+              <option value="8">8th Grade</option>
+              <option value="9">9th Grade</option>
+              <option value="10">10th Grade</option>
+              <option value="11">11th Grade</option>
+              <option value="12">12th Grade</option>
+            </select>
+          </div>
+        </div>
+        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center gap-3">
+          <div className="flex-1">
+            {student && !confirmDelete && (
+              <button onClick={() => setConfirmDelete(true)} className="px-4 py-2 text-red-600 font-bold hover:bg-red-50 rounded-lg transition-colors">Delete</button>
+            )}
+            {student && confirmDelete && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-red-600 font-bold mr-2">Are you sure?</span>
+                <button onClick={() => onDelete(student.id)} className="px-4 py-2 bg-red-600 text-white font-bold hover:bg-red-700 rounded-lg transition-colors">Yes, Delete</button>
+                <button onClick={() => setConfirmDelete(false)} className="px-3 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+              </div>
+            )}
+          </div>
+          {!confirmDelete && (
+            <div className="flex gap-2">
+              <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+              <button onClick={() => onSave(formData)} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 transition-colors shadow-sm">Save</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClassModal({ classItem, teachers, students, onClose, onSave, onDelete }) {
+  const [formData, setFormData] = useState(classItem || { name: '', teacherId: '', startTime: '', endTime: '', days: '', roster: [] });
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [gradeFilter, setGradeFilter] = useState('All');
+
+  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+
+  const handleAddStudent = (student) => {
+    setFormData({ ...formData, roster: [...formData.roster, student] });
+  };
+
+  const handleRemoveStudent = (studentId) => {
+    setFormData({ ...formData, roster: formData.roster.filter(s => s.id !== studentId) });
+  };
+
+  const assignedIds = formData.roster.map(s => s.id);
+  const availableStudents = students.filter(s => !assignedIds.includes(s.id));
+  const filteredAvailable = gradeFilter === 'All' 
+    ? availableStudents 
+    : availableStudents.filter(s => s.grade === gradeFilter);
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+        <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50 shrink-0">
+          <h3 className="font-bold text-lg text-slate-800">{classItem ? 'Edit Class & Roster' : 'Add New Class'}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
+        </div>
+        
+        <div className="p-6 overflow-y-auto flex-1 flex flex-col">
+          <div className="grid grid-cols-2 gap-6 mb-6 shrink-0">
+            <div>
+              <label className="block text-sm font-bold text-slate-600 mb-1">Class Name</label>
+              <input name="name" value={formData.name} onChange={handleChange} placeholder="e.g. Biology 101" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-slate-600 mb-1">Assigned Instructor</label>
+              <select name="teacherId" value={formData.teacherId} onChange={handleChange} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
+                <option value="">-- Select Instructor --</option>
+                {teachers.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4 mb-6 shrink-0">
+            <div>
+               <label className="block text-sm font-bold text-slate-600 mb-1">Start Time</label>
+               <input type="time" name="startTime" value={formData.startTime || ''} onChange={handleChange} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
+            <div>
+               <label className="block text-sm font-bold text-slate-600 mb-1">End Time</label>
+               <input type="time" name="endTime" value={formData.endTime || ''} onChange={handleChange} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
+            <div>
+               <label className="block text-sm font-bold text-slate-600 mb-1">Days</label>
+               <input name="days" value={formData.days || ''} onChange={handleChange} placeholder="e.g. MTuWThF" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-[350px] border-t border-slate-100 pt-6 flex flex-col">
+            <h4 className="font-bold text-slate-700 mb-4">Roster Management</h4>
+            <div className="grid grid-cols-2 gap-8 flex-1 h-full">
+              
+              {/* Available Students Column */}
+              <div className="flex flex-col h-full bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
+                <div className="p-3 border-b border-slate-200 bg-white flex justify-between items-center shrink-0">
+                  <span className="font-bold text-slate-600 text-sm">Available Students</span>
+                  <select value={gradeFilter} onChange={e => setGradeFilter(e.target.value)} className="text-sm px-2 py-1 bg-slate-50 border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-emerald-500 font-medium">
+                    <option value="All">All Grades</option>
+                    <option value="7">7th Grade</option>
+                    <option value="8">8th Grade</option>
+                    <option value="9">9th Grade</option>
+                    <option value="10">10th Grade</option>
+                    <option value="11">11th Grade</option>
+                    <option value="12">12th Grade</option>
+                  </select>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                  {filteredAvailable.map(s => (
+                    <button key={s.id} onClick={() => handleAddStudent(s)} className="w-full flex justify-between items-center p-2 bg-white rounded-lg border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all text-left group">
+                      <div>
+                        <p className="font-semibold text-slate-700">{s.name}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${getGradeBadgeClass(s.grade)}`}>
+                          {s.grade}
+                        </span>
+                        <div className="w-7 h-7 rounded-full bg-slate-50 group-hover:bg-emerald-100 text-slate-400 group-hover:text-emerald-600 flex items-center justify-center transition-colors">
+                           <Plus className="w-4 h-4" />
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                  {filteredAvailable.length === 0 && (
+                    <p className="text-center text-slate-400 text-sm py-8 font-medium">No available students found.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Assigned Students Column */}
+              <div className="flex flex-col h-full bg-purple-50/30 rounded-xl border border-purple-100 overflow-hidden">
+                <div className="p-3 border-b border-purple-100 bg-white flex justify-between items-center shrink-0">
+                  <span className="font-bold text-purple-800 text-sm">Assigned to Class</span>
+                  <span className="text-xs font-bold bg-purple-100 text-purple-700 px-3 py-1 rounded-full">{formData.roster.length} Students</span>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                  {formData.roster.map(s => (
+                    <button key={s.id} onClick={() => handleRemoveStudent(s.id)} className="w-full flex justify-between items-center p-2 bg-white rounded-lg border border-purple-100 hover:border-red-300 hover:bg-red-50 transition-all text-left group">
+                       <div>
+                        <p className="font-semibold text-slate-700 group-hover:text-red-700">{s.name}</p>
+                      </div>
+                      <div className="w-7 h-7 rounded-full bg-slate-50 group-hover:bg-red-200 text-slate-400 group-hover:text-red-600 flex items-center justify-center transition-colors">
+                         <X className="w-4 h-4" />
+                      </div>
+                    </button>
+                  ))}
+                  {formData.roster.length === 0 && (
+                    <p className="text-center text-purple-400 text-sm py-8 font-medium">Roster is currently empty.</p>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center gap-3 shrink-0">
+          <div className="flex-1">
+            {classItem && !confirmDelete && (
+              <button onClick={() => setConfirmDelete(true)} className="px-4 py-2 text-red-600 font-bold hover:bg-red-50 rounded-lg transition-colors">Delete Class</button>
+            )}
+            {classItem && confirmDelete && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-red-600 font-bold mr-2">Are you sure?</span>
+                <button onClick={() => onDelete(classItem.id)} className="px-4 py-2 bg-red-600 text-white font-bold hover:bg-red-700 rounded-lg transition-colors">Yes, Delete</button>
+                <button onClick={() => setConfirmDelete(false)} className="px-3 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+              </div>
+            )}
+          </div>
+          {!confirmDelete && (
+            <div className="flex gap-2">
+              <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg transition-colors">Cancel</button>
+              <button onClick={() => onSave(formData)} className="px-6 py-2 bg-purple-600 text-white font-bold rounded-lg hover:bg-purple-700 transition-colors shadow-sm">Save Roster</button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
